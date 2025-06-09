@@ -1,9 +1,12 @@
 {
   "overrides": [
     {
-      "files": ["**/*.yaml", "**/*.yml"],
+      "files": [
+        "**/*.yaml",
+        "**/*.yml"
+      ],
       "options": {
-        "tabWidth": 2,
+        "tabWidth": 16,
         "useTabs": false,
         "semi": false,
         "singleQuote": true,
