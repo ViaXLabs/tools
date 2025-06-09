@@ -1,15 +1,15 @@
 {
-  "tabWidth": 2,
-  "useTabs": false,
-  "semi": false,
-  "singleQuote": true,
-  "printWidth": 100,
-  "trailingComma": "none",
   "overrides": [
     {
-      "files": [".harness/**/*.yaml", ".harness/**/*.yml"],
+      "files": ["**/*.yaml", "**/*.yml"],
       "options": {
-        "tabWidth": 2
+        "tabWidth": 2,
+        "useTabs": false,
+        "semi": false,
+        "singleQuote": true,
+        "printWidth": 100,
+        "trailingComma": "none",
+        "proseWrap": "preserve"
       }
     }
   ]
