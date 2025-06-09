@@ -60,7 +60,7 @@ HEADERS = [
 if __name__ == "__main__":
     run_inventory(
         extract_func=extract_harness_info,
-        filename_pattern="",
+        filename_pattern="*",  # Updated from "" to "*"
         headers=HEADERS,
         output_csv="pipeline_inventory_harness.csv",
         description="Inventory .harness, .github, CODEOWNERS, and other key files/dirs in team/repo structure.",
@@ -73,3 +73,4 @@ if __name__ == "__main__":
         shutil.rmtree(pycache_path)
 
     print("✅ Cleanup complete: __pycache__ folder removed.")
+    
