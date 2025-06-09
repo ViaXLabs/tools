@@ -1,20 +1,5 @@
 # -----------------------------------------------------------------------------
 # Jenkinsfile Inventory Script
-#
-# Usage:
-#   python jenkinsfile_inventroy.py <root_dir>
-#
-# Arguments:
-#   <root_dir>   Path to the root directory containing team folders and repos.
-#
-# Description:
-#   This script scans all Jenkinsfiles in the given directory structure,
-#   extracts pipeline stages, step counts, and tool/command usage,
-#   and writes a CSV report (jenkins_pipeline_report_by_stage.csv).
-#
-# Output:
-#   - jenkins_pipeline_report_by_stage.csv: CSV file with pipeline and tool usage details.
-#   - error_log.txt: Log file for any file read errors.
 # -----------------------------------------------------------------------------
 
 import os
@@ -22,13 +7,45 @@ import csv
 import re
 import argparse
 import logging
+import shutil
 from pathlib import Path
 from utils import write_csv_report, iter_team_repo_files
 
 TOOL_KEYWORDS = [
-    "docker build", "docker push", "flake8", "gradlew", "newrelic", "nexus iq", "nexusiq",
-    "npm", "prisma-cloud", "prismacloudpublish", "python", "python3", "rvm.rake",
-    "sonar-scanner", "splunk", "tennable", "terraform apply", "twistlock"
+    "curl",
+    "cypress",
+    "docker-compose"
+    "docker build", 
+    "docker push", 
+    "flake8", 
+    "gradlew", 
+    "java"
+    "molecule",
+    "newrelic", 
+    "nexus-iq",
+    "nexus iq",
+    "nexusiq",
+    "node",
+    "newrelic", 
+    "npm", 
+    "prisma-cloud", 
+    "prismacloudpublish", 
+    "python", 
+    "python3", 
+    "rvm.rake",
+    "ruby",
+    "rubocop",
+    "snyk",
+    "sonar",
+    "sonar-scanner", 
+    "splunk", 
+    "tennable", 
+    "terraform apply", 
+    "terraform plan",
+    "twistlock",
+    "twistlock publish",
+    "twistlock scan",
+    "wget"
 ]
 TOOL_KEYWORDS_LOWER = [tool.lower() for tool in TOOL_KEYWORDS]
 
@@ -72,27 +89,6 @@ def collect_data(root_dir: str):
             data.append(row)
     return data
 
-def collect_file_summary(root_dir: str):
-    summary = []
-    for team, repo, jenkinsfile in iter_team_repo_files(root_dir, "Jenkinsfile*"):
-        rel_path = f"{repo}/{jenkinsfile.name}"
-        stages, step_counts, tool_counts_per_stage, tools_used_per_stage = parse_jenkinsfile(jenkinsfile)
-        total_steps = sum(step_counts)
-        total_tool_counts = [sum(tool_counts[i] for tool_counts in tool_counts_per_stage) for i in range(len(TOOL_KEYWORDS))]
-        tools_used_set = {tool for tools_used in tools_used_per_stage for tool in re.split(r", |\n", tools_used) if tool}
-        tools_used_str = ", ".join(sorted(tools_used_set))
-        row = {
-            "Team Folder": team,
-            "Repo Name": repo,
-            "Jenkinsfile Name": jenkinsfile.name,
-            "Total Step Count": total_steps,
-            "Full Path": rel_path,
-            "Tools Used": tools_used_str,
-            **{tool: count for tool, count in zip(TOOL_KEYWORDS, total_tool_counts)}
-        }
-        summary.append(row)
-    return summary
-
 def main():
     parser = argparse.ArgumentParser(description="Generate Jenkins pipeline tool usage reports.")
     parser.add_argument("root_dir", help="Path to the repos directory")
@@ -108,12 +104,14 @@ def main():
     headers = ["Team Folder", "Repo Name", "Jenkinsfile Name", "Stage Name", "Step Count", "Full Path", "Tools Used"] + TOOL_KEYWORDS
     write_csv_report(data, headers, "output", "jenkins_pipeline_report_by_stage.csv")
 
-    summary = collect_file_summary(args.root_dir)
-    summary_headers = ["Team Folder", "Repo Name", "Jenkinsfile Name", "Total Step Count", "Full Path", "Tools Used"] + TOOL_KEYWORDS
-    write_csv_report(summary, summary_headers, "output", "jenkins_pipeline_report_by_jenkinsfile.csv")
+    # Cleanup __pycache__ folder
+    pycache_path = Path("__pycache__")
+    if pycache_path.exists():
+        shutil.rmtree(pycache_path)
 
-    print("✅ Pipeline reports saved to output/jenkins_pipeline_report_by_stage.csv and output/jenkins_pipeline_report_by_jenkinsfile.csv")
+    print("✅ Pipeline reports saved to output/jenkins_pipeline_report_by_stage.csv")
     print("⚠️ Any errors encountered during processing are logged in output/error_log.txt")
 
 if __name__ == "__main__":
     main()
+
