@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-yaml-indent
+        name: Check YAML Indentation (Python)
+        language: python
+        entry: python hooks/validate_yaml_indent.py
+        types: [text]
+        files: '\.(yaml|yml)$'
