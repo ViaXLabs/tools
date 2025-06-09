@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import csv
+import shutil
 
 def write_csv_report(data, headers, output_dir, csv_file):
     output_dir = Path(output_dir)
@@ -32,7 +33,6 @@ def run_inventory(
     only_dirs=False
 ):
     import argparse
-    from pathlib import Path
 
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("root_dir", help="Root directory containing team subdirectories")
@@ -49,3 +49,10 @@ def run_inventory(
         data.extend(extract_func(file_or_dir, team, repo))
     write_csv_report(data, headers, "output", output_csv)
     print(f"✅ Inventory report saved to output/{output_csv}")
+
+    # Cleanup __pycache__ folder
+    pycache_path = Path("__pycache__")
+    if pycache_path.exists():
+        shutil.rmtree(pycache_path)
+
+    print("✅ Cleanup complete: __pycache__ folder removed.")
