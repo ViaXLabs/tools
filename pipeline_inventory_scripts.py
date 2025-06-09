@@ -7,6 +7,7 @@ and generating a summary CSV in the output folder.
 """
 
 import re
+import shutil
 from pathlib import Path
 from utils import write_csv_report, iter_team_repo_files, run_inventory
 
@@ -89,3 +90,10 @@ if __name__ == "__main__":
         output_csv="pipeline_inventory_scripts.csv",
         description="Inventory Jenkinsfile pipeline scripts and docker agent info."
     )
+
+    # Cleanup __pycache__ folder
+    pycache_path = Path("__pycache__")
+    if pycache_path.exists():
+        shutil.rmtree(pycache_path)
+
+    print("✅ Cleanup complete: __pycache__ folder removed.")

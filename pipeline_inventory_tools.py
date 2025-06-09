@@ -14,12 +14,12 @@ from utils import write_csv_report, iter_team_repo_files
 TOOL_KEYWORDS = [
     "curl",
     "cypress",
-    "docker-compose"
+    "docker-compose",
     "docker build", 
     "docker push", 
     "flake8", 
     "gradlew", 
-    "java"
+    "java",
     "molecule",
     "newrelic", 
     "nexus-iq",
@@ -109,9 +109,10 @@ def main():
     if pycache_path.exists():
         shutil.rmtree(pycache_path)
 
+    print("✅ Cleanup complete: __pycache__ folder removed.")
     print("✅ Pipeline reports saved to output/jenkins_pipeline_report_by_stage.csv")
     print("⚠️ Any errors encountered during processing are logged in output/error_log.txt")
 
 if __name__ == "__main__":
     main()
-
+    

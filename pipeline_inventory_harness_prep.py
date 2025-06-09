@@ -6,6 +6,7 @@ in a team/repo directory structure and write a CSV report.
 """
 
 from pathlib import Path
+import shutil
 from utils import write_csv_report, iter_team_repo_files, run_inventory
 
 INVENTORY_TARGETS = [
@@ -65,3 +66,10 @@ if __name__ == "__main__":
         description="Inventory .harness, .github, CODEOWNERS, and other key files/dirs in team/repo structure.",
         only_dirs=True
     )
+
+    # Cleanup __pycache__ folder
+    pycache_path = Path("__pycache__")
+    if pycache_path.exists():
+        shutil.rmtree(pycache_path)
+
+    print("✅ Cleanup complete: __pycache__ folder removed.")

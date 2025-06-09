@@ -6,6 +6,7 @@ directory structure and write a CSV report.
 """
 
 from pathlib import Path
+import shutil
 from utils import write_csv_report, iter_team_repo_files, run_inventory
 
 def extract_from_command(file_path: Path, max_lines: int = 100) -> str:
@@ -85,3 +86,10 @@ if __name__ == "__main__":
         description="Inventory Dockerfiles and Compose files in team/repo structure.",
         only_dirs=True
     )
+
+    # Cleanup __pycache__ folder
+    pycache_path = Path("__pycache__")
+    if pycache_path.exists():
+        shutil.rmtree(pycache_path)
+
+    print("✅ Cleanup complete: __pycache__ folder removed.")
