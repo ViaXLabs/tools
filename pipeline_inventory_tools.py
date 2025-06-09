@@ -1,20 +1,5 @@
 # -----------------------------------------------------------------------------
-# Jenkinsfile Inventory Script
-#
-# Usage:
-#   python jenkinsfile_inventroy.py <root_dir>
-#
-# Arguments:
-#   <root_dir>   Path to the root directory containing team folders and repos.
-#
-# Description:
-#   This script scans all Jenkinsfiles in the given directory structure,
-#   extracts pipeline stages, step counts, and tool/command usage,
-#   and writes a CSV report (jenkins_pipeline_report_by_stage.csv).
-#
-# Output:
-#   - jenkins_pipeline_report_by_stage.csv: CSV file with pipeline and tool usage details.
-#   - error_log.txt: Log file for any file read errors.
+# pipeline_inventory_tools.py
 # -----------------------------------------------------------------------------
 
 import os
