@@ -12,14 +12,36 @@ from pathlib import Path
 from utils import write_csv_report, iter_team_repo_files
 
 TOOL_KEYWORDS = [
+    "artillery",
+    "ansible",
+    "ansible-lint",
+    "alembic",
+    "aws",
+    "aws-cli",
+    "awscli",
     "curl",
     "cypress",
     "docker-compose",
     "docker build", 
     "docker push", 
     "flake8", 
+    "git",
+    "gradle",
+    "gradle build",
+    "gradle publish",
+    "gradle test",
+    "gradle wrapper",
+    "gradle assemble",
     "gradlew", 
     "java",
+    "junit",
+    "kubernetes",
+    "kubernetes apply",
+    "kubernetes create",
+    "kubernetes delete",
+    "jq",
+    "make install",
+    "make generate",
     "molecule",
     "newrelic", 
     "nexus-iq",
@@ -45,7 +67,8 @@ TOOL_KEYWORDS = [
     "twistlock",
     "twistlock publish",
     "twistlock scan",
-    "wget"
+    "wget",
+    "yarn"
 ]
 TOOL_KEYWORDS_LOWER = [tool.lower() for tool in TOOL_KEYWORDS]
 
