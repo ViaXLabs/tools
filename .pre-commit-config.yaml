@@ -7,3 +7,11 @@ repos:
         entry: python hooks/validate_yaml_indent.py
         types: [text]
         files: '\.(yaml|yml)$'
+  - repo: local
+    hooks:
+      - id: check-aws-tags
+        name: Check AWS Tags in Terraform (Warning Only)
+        language: python
+        entry: python hooks/aws_tags_check.py
+        types: [text]
+        files: '\.(tf)$'
