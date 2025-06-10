@@ -9,7 +9,7 @@ and generating a CSV report in the output folder.
 import re
 import shutil
 from pathlib import Path
-from utils import write_csv_report, iter_team_repo_files, run_inventory
+from tools.utils import write_csv_report, iter_team_repo_files, run_inventory
 
 def extract_vault_info(jenkinsfile_path: Path, team: str, repo: str):
     results = []
@@ -86,4 +86,3 @@ if __name__ == "__main__":
         shutil.rmtree(pycache_path)
 
     print("✅ Cleanup complete: __pycache__ folder removed.")
-    

@@ -9,7 +9,7 @@ import argparse
 import logging
 import shutil
 from pathlib import Path
-from utils import write_csv_report, iter_team_repo_files
+from tools.utils import write_csv_report, iter_team_repo_files
 
 TOOL_KEYWORDS = [
     "artillery",
@@ -22,9 +22,9 @@ TOOL_KEYWORDS = [
     "curl",
     "cypress",
     "docker-compose",
-    "docker build", 
-    "docker push", 
-    "flake8", 
+    "docker build",
+    "docker push",
+    "flake8",
     "git",
     "gradle",
     "gradle build",
@@ -32,7 +32,7 @@ TOOL_KEYWORDS = [
     "gradle test",
     "gradle wrapper",
     "gradle assemble",
-    "gradlew", 
+    "gradlew",
     "java",
     "junit",
     "kubernetes",
@@ -43,26 +43,26 @@ TOOL_KEYWORDS = [
     "make install",
     "make generate",
     "molecule",
-    "newrelic", 
+    "newrelic",
     "nexus-iq",
     "nexus iq",
     "nexusiq",
     "node",
-    "newrelic", 
-    "npm", 
-    "prisma-cloud", 
-    "prismacloudpublish", 
-    "python", 
-    "python3", 
+    "newrelic",
+    "npm",
+    "prisma-cloud",
+    "prismacloudpublish",
+    "python",
+    "python3",
     "rvm.rake",
     "ruby",
     "rubocop",
     "snyk",
     "sonar",
-    "sonar-scanner", 
-    "splunk", 
-    "tennable", 
-    "terraform apply", 
+    "sonar-scanner",
+    "splunk",
+    "tennable",
+    "terraform apply",
     "terraform plan",
     "twistlock",
     "twistlock publish",
@@ -138,4 +138,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

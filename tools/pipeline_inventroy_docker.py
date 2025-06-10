@@ -7,7 +7,7 @@ directory structure and write a CSV report.
 
 from pathlib import Path
 import shutil
-from utils import write_csv_report, iter_team_repo_files, run_inventory
+from tools.utils import write_csv_report, iter_team_repo_files, run_inventory
 
 def extract_from_command(file_path: Path, max_lines: int = 100) -> str:
     """

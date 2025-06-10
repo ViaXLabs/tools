@@ -7,7 +7,7 @@ in a team/repo directory structure and write a CSV report.
 
 from pathlib import Path
 import shutil
-from utils import write_csv_report, iter_team_repo_files, run_inventory
+from tools.utils import write_csv_report, iter_team_repo_files, run_inventory
 
 INVENTORY_TARGETS = [
     (".harness", ".harness", True),
