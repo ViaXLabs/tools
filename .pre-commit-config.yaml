@@ -6,7 +6,7 @@ repos:
         language: python
         entry: python hooks/validate_yaml_indent.py
         types: [text]
-        files: files: '^\.harness/.*\.(yaml|yml)$'
+        files: '^\.harness/.*\.(yaml|yml)$'
   - repo: local
     hooks:
       - id: check-aws-tags
