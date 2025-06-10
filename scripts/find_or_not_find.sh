@@ -1,10 +1,10 @@
 #!/bin/bash
 
 SEARCH_STRING="ls -la"    # String to search for
-TARGET_FILE="pipe*"       # File to look inside
-SEARCH_MODE="find"        # Set to "find" or "not_find"
+TARGET_FILE="pipe*"       # File pattern to search
+SEARCH_MODE="find"        # Set to "find" (ensure presence) or "not_find" (ensure absence)
 
-MISSING_FOLDERS=()        # Store matching repo names
+MATCHING_FOLDERS=()       # Stores repositories meeting the condition
 
 for repo in */; do
     if [ -d "$repo/.git" ]; then
@@ -15,17 +15,13 @@ for repo in */; do
                 "find")
                     if grep -q "$SEARCH_STRING" "$FILE_PATH"; then
                         echo "'$SEARCH_STRING' FOUND in: $repo"
-                    else
-                        echo "'$SEARCH_STRING' NOT found in: $repo"
-                        MISSING_FOLDERS+=("$repo")
+                        MATCHING_FOLDERS+=("$repo")
                     fi
                     ;;
                 "not_find")
                     if ! grep -q "$SEARCH_STRING" "$FILE_PATH"; then
-                        echo "'$SEARCH_STRING' NOT present in: $repo"
-                    else
-                        echo "'$SEARCH_STRING' FOUND in: $repo"
-                        MISSING_FOLDERS+=("$repo")
+                        echo "'$SEARCH_STRING' NOT found in: $repo"
+                        MATCHING_FOLDERS+=("$repo")
                     fi
                     ;;
                 *)
@@ -39,7 +35,11 @@ for repo in */; do
     fi
 done
 
-# List all repos that matched the condition
+# List all repositories that met the condition
 echo "--------------------------------"
-echo "Folders meeting '$SEARCH_MODE' condition for '$SEARCH_STRING':"
-printf '%s\n' "${MISSING_FOLDERS[@]}"
+if [ "${#MATCHING_FOLDERS[@]}" -gt 0 ]; then
+    echo "Repositories matching '$SEARCH_MODE' condition for '$SEARCH_STRING':"
+    printf '%s\n' "${MATCHING_FOLDERS[@]}"
+else
+    echo "No repositories matched the condition."
+fi
