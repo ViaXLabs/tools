@@ -1,0 +1,12 @@
+{
+  "services": [
+    {
+      "service": "Repo1",
+      "repo": "org/repo1"
+    },
+    {
+      "service": "Repo2",
+      "repo": "org/repo2"
+    }
+  ]
+}
