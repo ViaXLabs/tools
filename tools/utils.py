@@ -1,7 +1,18 @@
 import os
+import json
 from pathlib import Path
 import csv
 import shutil
+
+def load_tool_keywords(tool_file):
+    """Load tool keywords dynamically from a JSON file."""
+    try:
+        with open(tool_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("tools", [])
+    except Exception as e:
+        print(f"⚠️ Error loading tool keywords from {tool_file}: {e}")
+        return []
 
 def write_csv_report(data, headers, output_dir, csv_file):
     """Writes inventory data to a CSV file."""
@@ -27,43 +38,7 @@ def iter_team_repo_files(root_dir, filename_pattern="*"):
         if not team_path.is_dir():
             continue
         for repo_path in team_path.iterdir():
-            if not repo_path.is_dir() or not is_git_repo(repo_path):  # Git repo check added
+            if not repo_path.is_dir() or not is_git_repo(repo_path):
                 continue
             for file in repo_path.rglob(filename_pattern):  # Search in nested folders
                 yield team_path.name, repo_path.name, file
-
-def run_inventory(
-    extract_func,
-    filename_pattern,
-    headers,
-    output_csv,
-    description,
-    only_dirs=False
-):
-    """Runs the inventory process and writes results to CSV."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("root_dir", help="Root directory containing team subdirectories")
-    args = parser.parse_args()
-    root_dir = Path(args.root_dir)
-
-    if not root_dir.is_dir():
-        print(f"Error: The directory '{args.root_dir}' does not exist or is not accessible.")
-        return
-
-    data = []
-    for team, repo, file_or_dir in iter_team_repo_files(root_dir, filename_pattern):
-        if only_dirs and not file_or_dir.is_dir():
-            continue
-        data.extend(extract_func(file_or_dir, team, repo))
-
-    write_csv_report(data, headers, "output", output_csv)
-    print(f"✅ Inventory report saved to output/{output_csv}")
-
-    # Cleanup __pycache__ folder
-    pycache_path = Path("__pycache__")
-    if pycache_path.exists():
-        shutil.rmtree(pycache_path)
-
-    print("✅ Cleanup complete: __pycache__ folder removed.")

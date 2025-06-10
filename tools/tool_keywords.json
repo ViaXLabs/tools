@@ -1,4 +1,5 @@
-TOOL_KEYWORDS = [
+{
+  "tools": [
     "artillery",
     "ansible",
     "ansible-lint",
@@ -56,4 +57,5 @@ TOOL_KEYWORDS = [
     "twistlock scan",
     "wget",
     "yarn"
-]
+  ]
+}

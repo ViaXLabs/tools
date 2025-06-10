@@ -1,100 +1,20 @@
-# -------------------------------------------------------------------------------
-# pipeline_inventory_tools.py
-# -------------------------------------------------------------------------------
-
 import os
+import json
 import csv
 import re
 import argparse
 import logging
 import shutil
 from pathlib import Path
-from tools.utils import write_csv_report, iter_team_repo_files
+from tools.utils import write_csv_report, iter_team_repo_files, load_tool_keywords
 
-TOOL_KEYWORDS = [
-    "artillery",
-    "ansible",
-    "ansible-lint",
-    "alembic",
-    "aws",
-    "aws-cli",
-    "awscli",
-    "curl",
-    "cypress",
-    "docker-compose",
-    "docker build",
-    "docker push",
-    "flake8",
-    "git",
-    "gradle",
-    "gradle build",
-    "gradle publish",
-    "gradle test",
-    "gradle wrapper",
-    "gradle assemble",
-    "gradlew",
-    "java",
-    "junit",
-    "kubernetes",
-    "kubernetes apply",
-    "kubernetes create",
-    "kubernetes delete",
-    "jq",
-    "make install",
-    "make generate",
-    "molecule",
-    "newrelic",
-    "nexus-iq",
-    "nexus iq",
-    "nexusiq",
-    "node",
-    "newrelic",
-    "npm",
-    "prisma-cloud",
-    "prismacloudpublish",
-    "python",
-    "python3",
-    "rvm.rake",
-    "ruby",
-    "rubocop",
-    "snyk",
-    "sonar",
-    "sonar-scanner",
-    "splunk",
-    "tennable",
-    "terraform apply",
-    "terraform plan",
-    "twistlock",
-    "twistlock publish",
-    "twistlock scan",
-    "wget",
-    "yarn"
-]
-# (Your existing list remains unchanged)
-TOOL_KEYWORDS_LOWER = [tool.lower() for tool in TOOL_KEYWORDS]
-
-def is_git_repo(path: Path):
-    """Check if the directory contains a .git folder to confirm it’s a Git repository."""
-    return (path / ".git").exists()
-
-def iter_team_repo_files(root_dir, filename_pattern="*"):
-    """Iterate through team repo directories, ensuring they are valid Git repositories."""
-    root = Path(root_dir)
-    for team_path in root.iterdir():
-        if not team_path.is_dir():
-            continue
-        for repo_path in team_path.iterdir():
-            if not repo_path.is_dir() or not is_git_repo(repo_path):  # Git repo check added
-                continue
-            for file in repo_path.rglob(filename_pattern):  # Search in nested folders
-                yield team_path.name, repo_path.name, file
-
-def parse_jenkinsfile(path: Path):
+def parse_jenkinsfile(path: Path, tool_keywords):
     """Extracts Jenkins pipeline tool usage from a Jenkinsfile."""
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
         stage_blocks = re.findall(r"(stage\s*\(['\"].+?['\"]\)\s*\{.*?\})", content, re.DOTALL)
         stages, step_counts, tool_counts_per_stage, tools_used_per_stage = [], [], [], []
+        total_tool_counts = [0] * len(tool_keywords)  # Initialize summary tool counts
 
         for block in stage_blocks:
             stage_name_match = re.search(r"stage\s*\(['\"](.+?)['\"]\)", block)
@@ -103,25 +23,31 @@ def parse_jenkinsfile(path: Path):
                 steps_in_stage = len(re.findall(r"\s*steps\s*{", block))
                 step_counts.append(steps_in_stage)
                 block_lower = block.lower()
-                tool_counts = [len(re.findall(rf"\b{tool}\b", block_lower)) for tool in TOOL_KEYWORDS_LOWER]
+                tool_counts = [len(re.findall(rf"\b{tool.lower()}\b", block_lower)) for tool in tool_keywords]
                 tool_counts_per_stage.append(tool_counts)
-                tools_used = [TOOL_KEYWORDS[i] for i, count in enumerate(tool_counts) if count > 0]
+                tools_used = [tool_keywords[i] for i, count in enumerate(tool_counts) if count > 0]
                 tools_used_per_stage.append(", ".join(tools_used))
 
-        return stages, step_counts, tool_counts_per_stage, tools_used_per_stage
+                # Accumulate tool counts for summary report
+                total_tool_counts = [total_tool_counts[i] + tool_counts[i] for i in range(len(tool_counts))]
+
+        summary_tools_used = [tool_keywords[i] for i, count in enumerate(total_tool_counts) if count > 0]
+        return stages, step_counts, tool_counts_per_stage, tools_used_per_stage, total_tool_counts, ", ".join(summary_tools_used)
 
     except Exception as e:
         logging.error(f"Error reading file at {path}. Exception: {e}")
-        return [], [], [], []
+        return [], [], [], [], [0] * len(tool_keywords), ""
 
-def collect_data(root_dir: str):
+def collect_data(root_dir: str, tool_keywords):
     """Collects tool usage data across all repositories."""
-    data = []
+    detailed_data = []
+    summary_data = []
 
     for team, repo, jenkinsfile in iter_team_repo_files(root_dir, "Jenkinsfile*"):
         rel_path = f"{repo}/{jenkinsfile.name}"
-        stages, step_counts, tool_counts_per_stage, tools_used_per_stage = parse_jenkinsfile(jenkinsfile)
+        stages, step_counts, tool_counts_per_stage, tools_used_per_stage, total_tool_counts, summary_tools_used = parse_jenkinsfile(jenkinsfile, tool_keywords)
 
+        # Detailed report (by stage)
         for stage, step_count, tool_counts, tools_used in zip(stages, step_counts, tool_counts_per_stage, tools_used_per_stage):
             row = {
                 "Team Folder": team,
@@ -131,15 +57,27 @@ def collect_data(root_dir: str):
                 "Step Count": step_count,
                 "Full Path": rel_path,
                 "Tools Used": tools_used,
-                **{tool: count for tool, count in zip(TOOL_KEYWORDS, tool_counts)}
+                **{tool: count for tool, count in zip(tool_keywords, tool_counts)}
             }
-            data.append(row)
+            detailed_data.append(row)
 
-    return data
+        # Summary report (aggregated at Jenkinsfile level)
+        summary_row = {
+            "Team Folder": team,
+            "Repo Name": repo,
+            "Jenkinsfile Name": jenkinsfile.name,
+            "Full Path": rel_path,
+            "Tools Used": summary_tools_used,
+            **{tool: count for tool, count in zip(tool_keywords, total_tool_counts)}
+        }
+        summary_data.append(summary_row)
+
+    return detailed_data, summary_data
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Jenkins pipeline tool usage reports.")
     parser.add_argument("root_dir", help="Path to the repos directory")
+    parser.add_argument("--tool_file", default="tool_keywords.json", help="Path to the JSON file containing tool keywords")
     parser.add_argument("--log-level", default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level")
     args = parser.parse_args()
     Path("output").mkdir(exist_ok=True)
@@ -149,9 +87,14 @@ def main():
         level=getattr(logging, args.log_level.upper(), logging.WARNING)
     )
 
-    data = collect_data(args.root_dir)
-    headers = ["Team Folder", "Repo Name", "Jenkinsfile Name", "Stage Name", "Step Count", "Full Path", "Tools Used"] + TOOL_KEYWORDS
-    write_csv_report(data, headers, "output", "jenkins_pipeline_report_by_stage.csv")
+    tool_keywords = load_tool_keywords(args.tool_file)  # Load tools dynamically
+    detailed_data, summary_data = collect_data(args.root_dir, tool_keywords)
+
+    headers = ["Team Folder", "Repo Name", "Jenkinsfile Name", "Stage Name", "Step Count", "Full Path", "Tools Used"] + tool_keywords
+    summary_headers = ["Team Folder", "Repo Name", "Jenkinsfile Name", "Full Path", "Tools Used"] + tool_keywords
+
+    write_csv_report(detailed_data, headers, "output", "jenkins_pipeline_report_by_stage.csv")
+    write_csv_report(summary_data, summary_headers, "output", "jenkins_pipeline_summary_report.csv")
 
     # Cleanup __pycache__ folder
     pycache_path = Path("__pycache__")
@@ -159,7 +102,7 @@ def main():
         shutil.rmtree(pycache_path)
 
     print("✅ Cleanup complete: __pycache__ folder removed.")
-    print("✅ Pipeline reports saved to output/jenkins_pipeline_report_by_stage.csv")
+    print("✅ Reports saved to output/jenkins_pipeline_report_by_stage.csv & output/jenkins_pipeline_summary_report.csv")
     print("⚠️ Any errors encountered during processing are logged in output/error_log.txt")
 
 if __name__ == "__main__":
