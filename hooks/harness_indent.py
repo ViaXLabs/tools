@@ -5,28 +5,26 @@ def fix_yaml_indentation(file_path):
         lines = f.readlines()
 
     fixed_lines = []
-    inside_steps = False  # Track if inside 'steps:' block
-    first_step = True  # Track first '- step:' entry under 'steps:'
-    step_indent = None  # Store the correct indentation for the first '- step:'
+    adjust_next_line = False  # Flag to adjust indentation after `-`
+    step_indent = " " * 4  # Indent first `- step:` by 4 spaces
+    nested_indent = " " * 4  # Indent nested keys consistently
 
     for i, line in enumerate(lines):
         stripped_line = line.lstrip()
 
-        # Detect 'steps:' block
-        if stripped_line.startswith("steps:"):
-            inside_steps = True
-            first_step = True  # Reset first step tracking
+        # Ensure `-` triggers 4-space indent for the next line
+        if stripped_line.startswith("-"):
+            fixed_lines.append("  " + stripped_line)  # Ensure `-` uses 2 spaces
+            adjust_next_line = True
 
-        # Ensure the first '- step:' is indented correctly, but leave others unchanged
-        if stripped_line.startswith("- step:") and inside_steps:
-            if first_step:
-                step_indent = " " * 4  # First '- step:' should be indented 4 spaces
-                fixed_lines.append(step_indent + stripped_line)
-                first_step = False  # After first step, disable indentation enforcement
-            else:
-                fixed_lines.append(line)  # Keep original indentation for subsequent '- step:' lines
+        # Ensure nested keys under a `- step:` are correctly aligned (4 spaces)
+        elif adjust_next_line:
+            fixed_lines.append(nested_indent + stripped_line)  # Next line gets 4 spaces
+            adjust_next_line = False
+
+        # Standard indentation remains 2 spaces for everything else
         else:
-            fixed_lines.append(line)
+            fixed_lines.append("  " + stripped_line)
 
     # Overwrite the file with corrected indentation
     with open(file_path, "w") as f:
