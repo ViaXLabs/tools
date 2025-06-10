@@ -1,13 +1,13 @@
 #!/bin/bash
 
-SEARCH_STRING="ls -la"    # String to search for
-TARGET_FILE="pipe*"       # File pattern to search
+SEARCH_STRING="your-search-string"  # Change this to the string you want to find
+TARGET_FILE="your-file-pattern*"    # Change this to the file pattern you want to search
 
-FOUND_BOTH=()        # Stores repos where both the file AND string were found
-FOUND_BOTH_FILES=()  # Stores associated file paths
+FOUND_BOTH=()        # Stores repos where the file AND string were found
 FOUND_FILE_ONLY=()   # Stores repos where file was found but NOT the string
-FOUND_FILE_ONLY_FILES=()  # Stores associated file paths
 NO_FILE_FOUND=()     # Stores repos where NO matching file was found
+FOUND_BOTH_FILES=()  # Stores associated file paths
+FOUND_FILE_ONLY_FILES=() # Stores associated file paths
 
 for repo in */; do
     if [ -d "$repo/.git" ]; then

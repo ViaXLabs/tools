@@ -1,0 +1,39 @@
+name: Release Report Workflow
+
+on:
+  workflow_dispatch: # Allows manual triggers
+  push:
+    branches:
+      - main # Runs when code is pushed to main
+
+jobs:
+  generate-release-report:
+    runs-on: ubuntu-latest
+
+    env:
+      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+      AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
+      AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate Release Report
+        run: python generate_release_report.py
+
+      - name: Upload Release Report Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-report
+          path: release_report.html
+
+      - name: Notify Team on Slack
+        run: |
+          curl -X POST -H "Content-Type: application/json" \
+          -d '{"text": "📢 Release Report is ready! View it here: [Download Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts)"}' \
+          https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK
