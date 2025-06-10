@@ -1,6 +1,6 @@
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 # pipeline_inventory_tools.py
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
 import os
 import csv
@@ -70,13 +70,32 @@ TOOL_KEYWORDS = [
     "wget",
     "yarn"
 ]
+# (Your existing list remains unchanged)
 TOOL_KEYWORDS_LOWER = [tool.lower() for tool in TOOL_KEYWORDS]
 
+def is_git_repo(path: Path):
+    """Check if the directory contains a .git folder to confirm it’s a Git repository."""
+    return (path / ".git").exists()
+
+def iter_team_repo_files(root_dir, filename_pattern="*"):
+    """Iterate through team repo directories, ensuring they are valid Git repositories."""
+    root = Path(root_dir)
+    for team_path in root.iterdir():
+        if not team_path.is_dir():
+            continue
+        for repo_path in team_path.iterdir():
+            if not repo_path.is_dir() or not is_git_repo(repo_path):  # Git repo check added
+                continue
+            for file in repo_path.rglob(filename_pattern):  # Search in nested folders
+                yield team_path.name, repo_path.name, file
+
 def parse_jenkinsfile(path: Path):
+    """Extracts Jenkins pipeline tool usage from a Jenkinsfile."""
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
         stage_blocks = re.findall(r"(stage\s*\(['\"].+?['\"]\)\s*\{.*?\})", content, re.DOTALL)
         stages, step_counts, tool_counts_per_stage, tools_used_per_stage = [], [], [], []
+
         for block in stage_blocks:
             stage_name_match = re.search(r"stage\s*\(['\"](.+?)['\"]\)", block)
             if stage_name_match:
@@ -88,16 +107,21 @@ def parse_jenkinsfile(path: Path):
                 tool_counts_per_stage.append(tool_counts)
                 tools_used = [TOOL_KEYWORDS[i] for i, count in enumerate(tool_counts) if count > 0]
                 tools_used_per_stage.append(", ".join(tools_used))
+
         return stages, step_counts, tool_counts_per_stage, tools_used_per_stage
+
     except Exception as e:
         logging.error(f"Error reading file at {path}. Exception: {e}")
         return [], [], [], []
 
 def collect_data(root_dir: str):
+    """Collects tool usage data across all repositories."""
     data = []
+
     for team, repo, jenkinsfile in iter_team_repo_files(root_dir, "Jenkinsfile*"):
         rel_path = f"{repo}/{jenkinsfile.name}"
         stages, step_counts, tool_counts_per_stage, tools_used_per_stage = parse_jenkinsfile(jenkinsfile)
+
         for stage, step_count, tool_counts, tools_used in zip(stages, step_counts, tool_counts_per_stage, tools_used_per_stage):
             row = {
                 "Team Folder": team,
@@ -110,6 +134,7 @@ def collect_data(root_dir: str):
                 **{tool: count for tool, count in zip(TOOL_KEYWORDS, tool_counts)}
             }
             data.append(row)
+
     return data
 
 def main():
@@ -118,6 +143,7 @@ def main():
     parser.add_argument("--log-level", default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level")
     args = parser.parse_args()
     Path("output").mkdir(exist_ok=True)
+
     logging.basicConfig(
         filename="output/error_log.txt",
         level=getattr(logging, args.log_level.upper(), logging.WARNING)
