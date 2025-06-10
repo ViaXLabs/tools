@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Release Report</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background-color: #f4f4f4;
+        margin: 20px;
+      }
+      h1,
+      h2 {
+        text-align: center;
+        color: #333;
+      }
+      .container {
+        max-width: 900px;
+        margin: auto;
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      .section {
+        margin-bottom: 30px;
+      }
+      .env {
+        background: #e6f7ff;
+        padding: 10px;
+        border-left: 5px solid #0073e6;
+        margin-bottom: 10px;
+        border-radius: 5px;
+      }
+      .service {
+        background: #fff3e6;
+        padding: 10px;
+        border-left: 5px solid #ff9800;
+        margin-bottom: 10px;
+        border-radius: 5px;
+      }
+      ul {
+        list-style-type: none;
+        padding: 0;
+      }
+      li {
+        padding: 5px 0;
+      }
+      .latest {
+        color: green;
+        font-weight: bold;
+      }
+      .behind {
+        color: red;
+        font-weight: bold;
+      }
+      .commit-link {
+        color: #0073e6;
+        text-decoration: none;
+      }
+      .commit-link:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🚀 Release Report - June 10, 2025</h1>
+
+      <!-- Summary Report by Environment -->
+      <div class="section">
+        <h2>📌 Summary Report by Environment</h2>
+
+        <div class="env">
+          <h3>Development Environment</h3>
+          <ul>
+            <li>
+              <span class="service">Repo1:</span> Fix authentication bug
+              <span class="latest">(Latest ✅)</span>
+            </li>
+            <li>
+              <span class="service">Repo2:</span> Refactor logging module
+              <span class="behind">(Behind latest by 3 commits)</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="env">
+          <h3>QA Environment</h3>
+          <ul>
+            <li>
+              <span class="service">Repo1:</span> Improve API response time
+              <span class="behind">(Behind latest by 1 commit)</span>
+            </li>
+            <li>
+              <span class="service">Repo2:</span> Security patch applied
+              <span class="latest">(Latest ✅)</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Detailed Report by Service -->
+      <div class="section">
+        <h2>🛠️ Detailed Report by Service</h2>
+
+        <div class="service">
+          <h3>Repo1</h3>
+          <ul>
+            <li><strong>Development:</strong> Fix authentication bug</li>
+            <li>Deployed At: June 9, 2025</li>
+            <li>
+              AWS Deployment: Cluster - app-cluster | Task - api-service | Task
+              Count: 3
+            </li>
+          </ul>
+        </div>
+
+        <div class="service">
+          <h3>Repo2</h3>
+          <ul>
+            <li><strong>QA:</strong> Security patch applied</li>
+            <li>Deployed At: June 5, 2025</li>
+            <li>
+              AWS Deployment: Cluster - qa-cluster | Task - qa-service | Task
+              Count: 2
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Commit History Report -->
+      <div class="section">
+        <h2>📜 Commit History Report (June 1 – June 10, 2025)</h2>
+
+        <div class="service">
+          <h3>Repo1</h3>
+          <ul>
+            <li>
+              <a
+                href="https://github.com/org/repo1/commit/abc123"
+                class="commit-link"
+                >Optimize database queries (June 3, 2025)</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://github.com/org/repo1/commit/def456"
+                class="commit-link"
+                >Improve API response time (June 7, 2025)</a
+              >
+            </li>
+          </ul>
+        </div>
+
+        <div class="service">
+          <h3>Repo2</h3>
+          <ul>
+            <li>
+              <a
+                href="https://github.com/org/repo2/commit/ghi789"
+                class="commit-link"
+                >Security patch applied (June 5, 2025)</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://github.com/org/repo2/commit/jkl012"
+                class="commit-link"
+                >Refactor logging module (June 8, 2025)</a
+              >
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

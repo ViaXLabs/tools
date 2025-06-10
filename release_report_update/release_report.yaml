@@ -1,0 +1,73 @@
+# Harness Release Pipeline Configuration
+# This YAML file defines a CI/CD pipeline for releasing software, including stages for code checkout, testing, security scanning, deployment, report generation, and team notification.
+# Note: Replace placeholders like `github_connector`, `my_service`, `staging`, and Slack webhook URL with actual values.
+pipeline:
+  name: Release Pipeline
+  identifier: release_pipeline
+  projectIdentifier: my_project
+  orgIdentifier: my_org
+  stages:
+    - stage:
+        name: Checkout Code
+        identifier: checkout_code
+        type: CI
+        spec:
+          steps:
+            - step:
+                name: Clone Repository
+                identifier: clone_repo
+                type: GitClone
+                spec:
+                  connectorRef: github_connector
+                  repo: org/repo
+                  branch: main
+
+    - stage:
+        name: Install Dependencies
+        identifier: install_deps
+        type: CI
+        spec:
+          steps:
+            - step:
+                name: Install Packages
+                identifier: install_packages
+                type: Run
+                spec:
+                  command: pip install -r requirements.txt
+
+    - stage:
+        name: Generate Release Report
+        identifier: generate_release_report
+        type: CI
+        spec:
+          steps:
+            - step:
+                name: Generate HTML Report
+                identifier: generate_html_report
+                type: Run
+                spec:
+                  command: python generate_release_report.py
+
+            - step:
+                name: Archive Report
+                identifier: archive_report
+                type: SaveCache
+                spec:
+                  key: release_report.html
+                  paths:
+                    - release_report.html
+
+    - stage:
+        name: Notify Team
+        identifier: notify_team
+        type: CI
+        spec:
+          steps:
+            - step:
+                name: Send Slack Notification
+                identifier: send_slack_notification
+                type: Http
+                spec:
+                  method: POST
+                  url: "https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK"
+                  body: '{"text": "📢 Release Report is ready! View it here: ${BUILD_URL}/artifact/release_report.html"}'
