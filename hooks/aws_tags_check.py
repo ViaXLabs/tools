@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 # Pre-commit hook to verify that AWS resource blocks and
 # specific module blocks in a Terraform file include a 'tags' attribute.
+# For modules, if the module name (which may include underscores, e.g. "rds_db")
+# contains any of the following keywords (case-insensitive):
+#   rds, postgres, db, database, ec2, aurora
+# then the block is checked for a valid 'tags' attribute.
 
 import sys
 import re
 
 def get_block_lines(lines, start_index):
     """
-    Extracts a block's lines from a Terraform file starting at start_index.
+    Extracts the lines belonging to a Terraform block starting at start_index.
 
-    The block is assumed to start at the first occurrence of '{'
-    and ends when the balanced closing '}' is reached.
+    The block starts at the first occurrence of '{' and ends when all opened braces
+    are closed.
 
     Returns:
-        block_lines (list): List of lines that belong to the block.
-        next_index (int): The index of the line immediately after the block.
+        block_lines (list): Lines within the block.
+        next_index (int): Line index immediately after the block.
     """
     block_lines = []
     brace_count = 0
@@ -39,14 +43,14 @@ def get_block_lines(lines, start_index):
 
 def check_aws_tags(file_path):
     """
-    Checks if AWS resource blocks and select module blocks include a 'tags' attribute.
+    Validates that AWS resource blocks and select module blocks include a 'tags' attribute.
 
-    For module blocks, we only trigger the check if the module's name (extracted via regex)
-    contains any of these keywords (case-insensitive):
-        rds, postgres, db, database, ec2, aurora
+    For module blocks, we extract the module name (expecting a format like: module "name" {),
+    and only perform the check if the module name (which could include underscores, e.g. "rds_db")
+    contains one of the designated keywords.
 
     Returns:
-        warnings (list): A list of warning messages for blocks missing 'tags'.
+        warnings (list): Warning messages for blocks missing the 'tags' attribute.
     """
     warnings = []
     with open(file_path, "r") as f:
@@ -54,14 +58,14 @@ def check_aws_tags(file_path):
 
     # Regex to match a valid tags assignment with optional whitespace before '='.
     tags_regex = re.compile(r'\btags\s*=', re.IGNORECASE)
-    # Keywords to check within module names.
+    # Keywords to check for within module names.
     module_keywords = ['rds', 'postgres', 'db', 'database', 'ec2', 'aurora']
 
     i = 0
     while i < len(lines):
         stripped_line = lines[i].strip()
 
-        # Check if this is an AWS resource block.
+        # AWS resource block: check if the line contains both "resource" and "aws_".
         if "resource" in stripped_line and "aws_" in stripped_line:
             block_lines, next_index = get_block_lines(lines, i)
             if not any(tags_regex.search(bl) for bl in block_lines):
@@ -69,13 +73,13 @@ def check_aws_tags(file_path):
             i = next_index
             continue
 
-        # Check for module blocks that need tag validation.
+        # Module block: check if the line starts with "module".
         elif stripped_line.startswith("module"):
-            # Extract the module name using regex; expecting a format like: module "name" {
+            # Expect module declaration in the form: module "name" {
             module_match = re.search(r'^module\s+"([^"]+)"', stripped_line)
             if module_match:
                 module_name = module_match.group(1).lower()
-                # Proceed only if the module name contains one of the specified keywords.
+                # Check if module name contains any of the designated keywords.
                 if any(keyword in module_name for keyword in module_keywords):
                     block_lines, next_index = get_block_lines(lines, i)
                     if not any(tags_regex.search(bl) for bl in block_lines):
@@ -87,21 +91,22 @@ def check_aws_tags(file_path):
     return warnings
 
 def main():
-    # Ensure file path is provided
+    # Validate that a file path was provided.
     if len(sys.argv) < 2:
         print("Usage: python hooks/check_aws_tags.py <file.tf>")
-        sys.exit(0)  # Do not block commit if no file is provided.
+        sys.exit(0)  # Exit without blocking commit if no file is provided.
 
     file_path = sys.argv[1]
     warnings = check_aws_tags(file_path)
 
-    # Output messages: warnings if any, else confirmation of compliance.
+    # Output warnings if any; otherwise confirm that all checks passed.
     if warnings:
         print("\n".join(warnings))
     else:
         print("✅ All AWS resources and relevant modules have 'tags'.")
 
-    sys.exit(0)  # Always exit with 0 to keep the commit non-blocking.
+    # Always exit with status 0 to avoid blocking commits.
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
