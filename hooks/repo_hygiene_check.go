@@ -30,11 +30,25 @@ var requiredCandidates = []RequiredCandidate{
 func main() {
 	missingFound := false
 
-	// Loop over each required entry, checking for both existence and type.
+	// For debugging: print the current working directory.
+	wd, err := os.Getwd()
+	if err == nil {
+		fmt.Printf("Checking repository hygiene from working directory: %s\n", wd)
+	} else {
+		fmt.Printf("WARNING: Cannot determine working directory: %v\n", err)
+	}
+
+	// Loop over each required candidate, checking for both existence and expected type.
 	for _, candidate := range requiredCandidates {
 		info, err := os.Stat(candidate.Path)
 		if err != nil {
-			fmt.Printf("WARNING: Missing required %s: %s\n", candidate.RequiredType, candidate.Path)
+			// Check if the error is because the candidate does not exist.
+			if os.IsNotExist(err) {
+				fmt.Printf("WARNING: Missing required %s: %s\n", candidate.RequiredType, candidate.Path)
+			} else {
+				// Print any other error that might be encountered.
+				fmt.Printf("WARNING: Could not access %s %s: %v\n", candidate.RequiredType, candidate.Path, err)
+			}
 			missingFound = true
 			continue
 		}
@@ -56,6 +70,6 @@ func main() {
 		fmt.Println("✅ Repository hygiene check passed.")
 	}
 
-	// Always exit with 0 so that the commit is not blocked.
+	// Always exit with 0 to avoid blocking the commit.
 	os.Exit(0)
 }
