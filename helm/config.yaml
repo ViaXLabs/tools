@@ -1,0 +1,15 @@
+name: myawesome-chart
+chart_version: "0.2.0"
+app_version: "1.2.3"
+description: "Automated Helm Chart"
+replica_count: 3
+image_repository: busybox
+image_tag: "1.35"
+image_pull_policy: Always
+service_type: NodePort
+service_port: 8080
+ingress_enabled: true
+ingress_host: example.com
+ingress_path: "/"
+configmap_key: app-config
+configmap_value: production
