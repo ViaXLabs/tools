@@ -1,7 +1,7 @@
 name: myawesome-chart
 chart_version: "0.2.0"
 app_version: "1.2.3"
-description: "Automated Helm Chart"
+description: "Automated Umbrella Helm Chart"
 replica_count: 3
 image_repository: busybox
 image_tag: "1.35"
@@ -13,3 +13,15 @@ ingress_host: example.com
 ingress_path: "/"
 configmap_key: app-config
 configmap_value: production
+dependencies_enabled: true
+subcharts:
+  - name: subchart1
+    version: "0.1.0"
+    repository: "https://example.com/charts"
+  - name: subchart2
+    version: "0.2.0"
+    repository: "https://charts.example.org"
+library_enabled: true
+library_name: common-templates
+library_version: "0.1.0"
+library_repository: "file://charts/library"
