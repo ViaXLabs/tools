@@ -1,4 +1,4 @@
-// helm_chart_generator.go
+// main.go
 //
 // This tool generates an umbrella Helm chart using one single unified template
 // based on settings from an external YAML configuration file. All file definitions
@@ -11,7 +11,7 @@
 // section is generated in Chart.yaml.
 //
 // Usage Example:
-//   go run helm_chart_generator.go -config config.yaml -overwrite -verbose -limit full
+//   go run main.go -config config.yaml -overwrite -verbose -limit full
 //
 // Sample config.yaml:
 //   name: myawesome-chart
