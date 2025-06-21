@@ -207,11 +207,3 @@ Create a `config.json` next to `repo-hygiene.sh`:
 7. **If** `--apply` is set, immediately run the fix-script.
 
 ---
-
-## License
-
-MIT © Your Name
-
-```
-
-```
