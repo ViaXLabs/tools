@@ -1,0 +1,5 @@
+{
+  "model_repo": "../my-model-repo",
+  "required_dirs": [".vscode", ".github", "harness"],
+  "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
+}
