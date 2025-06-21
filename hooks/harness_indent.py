@@ -5,18 +5,26 @@ def fix_yaml_indentation(file_path):
         lines = f.readlines()
 
     fixed_lines = []
-    prev_indent = 0  # Track indentation of the previous line
+    adjust_next_line = False  # Flag to adjust indentation after `-`
+    step_indent = " " * 4  # Indent first `- step:` by 4 spaces
+    nested_indent = " " * 4  # Indent nested keys consistently
 
     for i, line in enumerate(lines):
         stripped_line = line.lstrip()
 
-        # If the line starts with "-", indent it exactly 4 spaces more than the previous line
-        if stripped_line.startswith("-") and i > 0:
-            corrected_indent = " " * (prev_indent + 4)
-            fixed_lines.append(corrected_indent + stripped_line)
+        # Ensure `-` triggers 4-space indent for the next line
+        if stripped_line.startswith("-"):
+            fixed_lines.append("  " + stripped_line)  # Ensure `-` uses 2 spaces
+            adjust_next_line = True
+
+        # Ensure nested keys under a `- step:` are correctly aligned (4 spaces)
+        elif adjust_next_line:
+            fixed_lines.append(nested_indent + stripped_line)  # Next line gets 4 spaces
+            adjust_next_line = False
+
+        # Standard indentation remains 2 spaces for everything else
         else:
-            fixed_lines.append(line)
-            prev_indent = len(line) - len(stripped_line)  # Update previous line's indentation
+            fixed_lines.append("  " + stripped_line)
 
     # Overwrite the file with corrected indentation
     with open(file_path, "w") as f:
