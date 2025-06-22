@@ -1,44 +1,39 @@
-````markdown
 # Repo Hygiene Fix-Script Generator
 
-A **Bash** helper that scans a directory of Git repos against a “model” repo and spits out a self-contained **fix script**.
-All your repos live under one folder; the script:
+A **Bash** helper that scans a directory of Git repositories against a “model” repository and generates a self-contained fix script. You can also apply fixes automatically.
 
-- [Installation](#installation)
-- [Configuration (JSON)](#configuration-json)
-- [Usage](#usage)
-- [Example Directory Layout](#example-directory-layout)
-- [Sample Run \& Output](#sample-run--output)
-- [How It Works](#how-it-works)
-- [License](#license)
-
-- Reads **one** JSON config (`-i config.json`) for:
-  - `model_repo`: path to your reference (“gold-standard”) repo
-  - `required_dirs`: list of directories every repo must have
-  - `required_files`: list of files (including dot-files and nested paths)
-- Walks each `*/.git` subfolder under your current directory
-- Builds a **fix script** (default `fix-script.sh`) in which:
-  - **All non-action** lines are commented out
-  - `echo` lines announce which repo and items are being fixed
-  - `mkdir -p` & `cp` lines are active—ready to run
-- Optionally runs the fix script immediately with `--apply`
+- [Repo Hygiene Fix-Script Generator](#repo-hygiene-fix-script-generator)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+  - [Usage](#usage)
+  - [Example Directory Layout](#example-directory-layout)
+  - [Sample Run](#sample-run)
+    - [1) Dry-run: Generate fix script only](#1-dry-run-generate-fix-script-only)
+      - [Excerpt from `fix-repos.sh`](#excerpt-from-fix-repossh)
+    - [2) Apply: Generate \& execute](#2-apply-generate--execute)
+  - [Script Details](#script-details)
+  - [Testing](#testing)
+  - [License](#license)
 
 ---
 
-## Table of Contents
+## Features
 
-1. [Requirements](#requirements)
-2. [Installation](#installation)
-3. [Configuration (JSON)](#configuration-json)
-4. [Usage](#usage)
-5. [Example Directory Layout](#example-directory-layout)
-6. [Sample Run & Output](#sample-run--output)
-7. [Script Walk-Through](#script-walk-through)
-8. [License](#license)
+- Reads **all settings** from a single JSON config
+- Scans each subfolder for a `.git` directory (i.e. real Git repos)
+- Validates presence of required **directories** and **files** (including dot-files and nested paths)
+- For each existing file, compares line count vs. the model repo
+- Emits a **fix script** (`fix-script.sh` by default) in which:
+  - **All non-action** lines are commented out (`# …`)
+  - `echo` lines announce which repo and items are being updated
+  - `mkdir -p` and `cp` lines are active—ready to run
+- Optional `--apply` mode runs the generated fix script immediately
 
 ---
 
-## Requirements
+## Prerequisites
 
 - **Bash** (GNU Bash 4+)
 - **jq** (JSON processor)
@@ -50,14 +45,13 @@ sudo apt-get update && sudo apt-get install -y jq
 # macOS (Homebrew)
 brew install jq
 ```
-````
 
 ---
 
 ## Installation
 
-1. Clone or download this repo.
-2. Make the main script executable:
+1. Clone or download this repository.
+2. Make the script executable:
 
    ```bash
    chmod +x repo-hygiene.sh
@@ -65,9 +59,13 @@ brew install jq
 
 ---
 
-## Configuration (JSON)
+## Configuration
 
-Create a `config.json` next to `repo-hygiene.sh`:
+Create a JSON file (e.g. `config.json`) describing:
+
+- **model_repo**: path to your “gold-standard” repository
+- **required_dirs**: array of directory names/paths to enforce
+- **required_files**: array of file paths (including dot-files and nested paths)
 
 ```json
 {
@@ -77,9 +75,7 @@ Create a `config.json` next to `repo-hygiene.sh`:
 }
 ```
 
-- **model_repo**: Path to the repo containing your “correct” folders & files.
-- **required_dirs**: Any subdirs you want in _every_ target repo.
-- **required_files**: Dot-files or nested files to enforce globally.
+Place `config.json` alongside `repo-hygiene.sh`.
 
 ---
 
@@ -93,12 +89,12 @@ Create a `config.json` next to `repo-hygiene.sh`:
   [-h]
 ```
 
-| Flag        | Description                                                               |
-| ----------- | ------------------------------------------------------------------------- |
-| `-i <file>` | **(required)** JSON config file                                           |
-| `-o <file>` | Output fix script path (default: `fix-script.sh`)                         |
-| `--apply`   | After generating the script, immediately execute it to copy missing items |
-| `-h`        | Show help and exit                                                        |
+| Flag        | Description                                                        |
+| ----------- | ------------------------------------------------------------------ |
+| `-i <file>` | **(Required)** Path to the JSON config file                        |
+| `-o <file>` | Output fix script path (default: `fix-script.sh`)                  |
+| `--apply`   | After generating the script, immediately execute it to apply fixes |
+| `-h`        | Show help and exit                                                 |
 
 ---
 
@@ -107,7 +103,7 @@ Create a `config.json` next to `repo-hygiene.sh`:
 ```
 .
 ├── config.json
-├── my-model-repo/              # your “gold standard” repo
+├── my-model-repo/               # reference “model” repo
 │   ├── .git/
 │   ├── .gitignore
 │   ├── pre-commit.yaml
@@ -128,82 +124,90 @@ Create a `config.json` next to `repo-hygiene.sh`:
 
 ---
 
-## Sample Run & Output
+## Sample Run
 
-1. **Generate the fix script (dry-run):**
+### 1) Dry-run: Generate fix script only
 
-   ```bash
-   cd repos
-   ../repo-hygiene.sh -i ../config.json -o fix-repos.sh
-   ```
+```bash
+cd repos
+../repo-hygiene.sh -i ../config.json -o fix-repos.sh
+```
 
-2. **View `fix-repos.sh`:**
+#### Excerpt from `fix-repos.sh`
 
-   ```bash
-   #!/usr/bin/env bash
-   # Auto-generated fix script – DO NOT EDIT
-   # Model repo : ../my-model-repo
-   # Generated on: 2025-06-21T12:34:56+00:00
+```bash
+#!/usr/bin/env bash
+# Auto-generated fix script — DO NOT EDIT
+# Model repo : ../my-model-repo
+# Generated on: 2025-06-22T12:00:00+00:00
 
-   # Repo: repoA/
-   echo "=> Updating repoA/"
-   echo "   Missing dirs : .vscode .github harness"
-   echo "   Missing files: pre-commit.yaml .vscode/extensions.json"
+# ───────────────────────────────────────
+# Repo: repoA/
+#   Directories:
+#     – DIR .vscode missing
+#     – DIR .github missing
+#   Files:
+#     + FILE .gitignore exists (12 vs 14)
+#     – FILE pre-commit.yaml missing
+#     – FILE .vscode/extensions.json missing
 
-   mkdir -p "repoA/.vscode"
-   cp -r "../my-model-repo/.vscode" "repoA/.vscode"
-   mkdir -p "repoA/.github"
-   cp -r "../my-model-repo/.github" "repoA/.github"
-   mkdir -p "repoA/harness"
-   cp -r "../my-model-repo/harness" "repoA/harness"
-   cp "../my-model-repo/pre-commit.yaml" "repoA/pre-commit.yaml"
-   mkdir -p "repoA/.vscode"
-   cp "../my-model-repo/.vscode/extensions.json" "repoA/.vscode/extensions.json"
+echo ">> Updating repoA/"
+echo " Missing dirs : .vscode .github"
+echo " Missing files: pre-commit.yaml .vscode/extensions.json"
 
+mkdir -p "repoA/.vscode"
+cp -r "../my-model-repo/.vscode" "repoA/.vscode"
+mkdir -p "repoA/.github"
+cp -r "../my-model-repo/.github" "repoA/.github"
+cp "../my-model-repo/pre-commit.yaml" "repoA/pre-commit.yaml"
+mkdir -p "repoA/.vscode"
+cp "../my-model-repo/.vscode/extensions.json" "repoA/.vscode/extensions.json"
 
-   # Repo: repoB/
-   echo "=> Updating repoB/"
-   echo "   Missing dirs : .vscode .github harness"
-   echo "   Missing files: .gitignore pre-commit.yaml .vscode/extensions.json"
+# ───────────────────────────────────────
+# Repo: repoB/
+#   Directories:
+#     – DIR .vscode missing
+#     – DIR .github missing
+#   Files:
+#     – FILE .gitignore missing
+#     – FILE pre-commit.yaml missing
+#     – FILE .vscode/extensions.json missing
 
-   mkdir -p "repoB/.vscode"
-   cp -r "../my-model-repo/.vscode" "repoB/.vscode"
-   mkdir -p "repoB/.github"
-   cp -r "../my-model-repo/.github" "repoB/.github"
-   mkdir -p "repoB/harness"
-   cp -r "../my-model-repo/harness" "repoB/harness"
-   cp "../my-model-repo/.gitignore" "repoB/.gitignore"
-   cp "../my-model-repo/pre-commit.yaml" "repoB/pre-commit.yaml"
-   mkdir -p "repoB/.vscode"
-   cp "../my-model-repo/.vscode/extensions.json" "repoB/.vscode/extensions.json"
+echo ">> Updating repoB/"
+# … and so on …
+```
 
+### 2) Apply: Generate & execute
 
-   # Repo: repoC/ is already compliant – no actions needed.
-   ```
+```bash
+../repo-hygiene.sh -i ../config.json --apply
+```
 
-3. **Apply fixes immediately:**
+This will:
 
-   ```bash
-   ../repo-hygiene.sh -i ../config.json -o fix-repos.sh --apply
-   ```
+1. Backup any existing `fix-script.sh` to `fix-script.sh.YYYYMMDD_HHMMSS.bak`
+2. Generate a fresh `fix-script.sh`
+3. Make it executable
+4. Run it immediately, creating directories and copying files as needed
 
-   This will generate & run `fix-repos.sh`, creating any missing dirs/files.
+---
+
+## Script Details
+
+Below is the complete ``.
+Save it in your working directory and run `chmod +x repo-hygiene.sh`
 
 ---
 
-## How It Works
+## Testing
 
-1. **Parse flags** (`-i`, `-o`, `--apply`, `-h`).
-2. **Validate** JSON config and `jq` availability.
-3. **Read** `model_repo`, `required_dirs[]`, `required_files[]` via `jq`.
-4. **Create** the fix-script header.
-5. **Loop** through each `*/.git` subfolder:
-   - Build lists of **missing** dirs & files.
-   - If **any** are missing:
-     - Write `echo` lines (active) to announce the fix.
-     - Write `mkdir -p` and `cp` (active) commands.
-   - Otherwise, write a commented note that the repo is compliant.
-6. **Make** the fix-script executable.
-7. **If** `--apply` is set, immediately run the fix-script.
+1. **Set up a temporary workspace** (see the “Smoke Test” in this repo or copy-paste section below).
+2. **Run a dry-run** and inspect `fix-script.sh`—verify status block, commented lines, and active commands.
+3. **Run with `--apply`**—confirm missing directories/files appear in your target repos.
 
 ---
+
+## License
+
+MIT © Your Name.
+Feel free to adapt and extend!
