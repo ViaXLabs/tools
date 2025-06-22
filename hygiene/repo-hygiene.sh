@@ -31,7 +31,7 @@ fi
 # -----------------------------------------------------------------------------
 # Function to expand '~' to $HOME if the path starts with '~'
 expand_tilde() {
-  # If the first character is '~', then substitute it with $HOME.
+  # If the first character is '~', substitute it with $HOME.
   [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
@@ -93,23 +93,24 @@ done
 [[ -n $CONFIG ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
 [[ -f $CONFIG ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
 
-# If OUTFILE wasn’t provided via CLI, load it from config.
+# If OUTFILE wasn’t provided via command-line, load it from config.
 if [[ -z $OUTFILE ]]; then
   OUTFILE=$(jq -r '.output_file // "fix-script.sh"' "$CONFIG")
 fi
 
-# ---
-# Expand '~' in paths to $HOME for convenience.
+# -----------------------------------------------------------------------------
+# Expand '~' in important paths.
 SCAN_DIR=$(expand_tilde "$(jq -r '.scan_dir // empty' "$CONFIG")")
 MODEL_REPO=$(expand_tilde "$(jq -r '.model_repo // empty' "$CONFIG")")
 OUTFILE=$(expand_tilde "$OUTFILE")
 
 # -----------------------------------------------------------------------------
-# 3) Load arrays for required directories and files.
-mapfile -t REQUIRED_DIRS < <(jq -r '.required_dirs[]' "$CONFIG")
-mapfile -t REQUIRED_FILES < <(jq -r '.required_files[]' "$CONFIG")
+# 3) Load arrays for required directories and files from JSON.
+# Use readarray as a replacement for mapfile.
+readarray -t REQUIRED_DIRS < <(jq -r '.required_dirs[]' "$CONFIG")
+readarray -t REQUIRED_FILES < <(jq -r '.required_files[]' "$CONFIG")
 
-# Validate that scan_dir and model_repo are provided.
+# Validate that SCAN_DIR and MODEL_REPO are provided.
 for var in SCAN_DIR MODEL_REPO; do
   [[ -n "${!var}" ]] || { echo "ERROR: '$var' missing in config." >&2; exit 3; }
 done
@@ -139,21 +140,21 @@ EOF
 
 # -----------------------------------------------------------------------------
 # 6) Recursively scan SCAN_DIR for Git repositories.
-#     We use 'find' to locate all ".git" directories and treat their parent as repo root.
+#     We use the find command to locate all ".git" directories.
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
-  # Skip if the repository is the model_repo (if its path starts with model_repo).
+  # Skip if the repository is the model_repo (if its path begins with model_repo).
   if [[ "$(realpath "$repo")" == "$(realpath "$MODEL_REPO")"* ]]; then
     continue
   fi
 
-  # Initialize arrays to track which required directories and files are present.
+  # Initialize arrays to track present vs. missing items.
   present_dirs=(); missing_dirs=()
-  declare -A file_lines  # Map: filename -> "repoLines:modelLines"
+  declare -A file_lines  # Maps filename -> "repoLines:modelLines"
   missing_files=()
 
-  # Check each required directory.
+  # Check required directories.
   for d in "${REQUIRED_DIRS[@]}"; do
     if [[ -d "$repo$d" ]]; then
       present_dirs+=("$d")
@@ -162,10 +163,10 @@ while IFS= read -r gitdir; do
     fi
   done
 
-  # Check each required file and record line counts if exists.
+  # Check required files and record line counts if they exist.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"           # Repository file path
-    mp="$MODEL_REPO/$f"    # Model repository file path
+    rp="$repo$f"           # Path in the target repo.
+    mp="$MODEL_REPO/$f"    # Path in the model repo.
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
       ml=$(wc -l < "$mp" | tr -d ' ')
@@ -201,19 +202,19 @@ while IFS= read -r gitdir; do
   } >> "$OUTFILE"
 
   # -----------------------------------------------------------------------------
-  # 8) Emit active commands if any items are missing.
+  # 8) Emit active fix commands if required items are missing.
   if (( ${#missing_dirs[@]} + ${#missing_files[@]} )); then
     {
       echo "echo \">> Updating $repo\""
       echo "echo \" Missing dirs : ${missing_dirs[*]}\""
       echo "echo \" Missing files: ${missing_files[*]}\""
       echo
-      # Generate commands for each missing directory.
+      # For each missing directory, create it and copy from the model repository.
       for d in "${missing_dirs[@]}"; do
         echo "mkdir -p \"$repo$d\""
         echo "cp -r \"$MODEL_REPO/$d\" \"$repo$d\""
       done
-      # Generate commands for each missing file.
+      # For each missing file, create necessary parent directories and copy the file.
       for f in "${missing_files[@]}"; do
         dp=\$(dirname "$f")
         [[ \$dp != "." ]] && echo "mkdir -p \"$repo\$dp\""
@@ -228,12 +229,12 @@ while IFS= read -r gitdir; do
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
 # -----------------------------------------------------------------------------
-# 9) Finalize the fix-script: make it executable.
+# 9) Finalize: make the output fix script executable.
 chmod +x "${OUTFILE}"
 echo "Fix-script generated at: ${OUTFILE}"
 
 # -----------------------------------------------------------------------------
-# 10) Optionally apply the fix-script immediately.
+# 10) Optionally, apply the fix script immediately.
 if [[ "${APPLY:-0}" -eq 1 ]]; then
   echo "Running ${OUTFILE}..."
   ./"${OUTFILE}"
