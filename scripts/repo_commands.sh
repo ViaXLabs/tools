@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # Optional: preset a TARGET_DIR within the script.
-# Leave empty ("") if you want to be prompted when no argument is provided.
-TARGET_DIR_OVERRIDE=""
+# For example, to set the default directory, you can do:
+TARGET_DIR_OVERRIDE="~/repo/TEAM1"
 
-# If a directory argument is provided, use it. Otherwise, check for a script override.
+# If a directory argument is provided, use it.
+# Otherwise, check for a script override.
 if [ $# -ge 1 ]; then
     TARGET_DIR="$1"
 elif [ -n "$TARGET_DIR_OVERRIDE" ]; then
@@ -12,6 +13,9 @@ elif [ -n "$TARGET_DIR_OVERRIDE" ]; then
 else
     read -p "Enter the directory to scan for repos: " TARGET_DIR
 fi
+
+# Expand '~' to $HOME if present at the beginning of the path.
+TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 
 # Validate the target directory.
 if [ ! -d "$TARGET_DIR" ]; then
@@ -26,9 +30,9 @@ GIT_COMMAND="git fetch; git pull; git branch"
 for repo in "$TARGET_DIR"/*/; do
     if [ -d "$repo/.git" ]; then  # Check if the directory is a Git repository.
         echo "Processing repo: $repo"
-        cd "$repo" || exit  # Enter the repository directory.
+        cd "$repo" || exit  # Enter the repo directory.
         eval "$GIT_COMMAND"  # Execute the Git command(s).
-        cd - > /dev/null  # Return to the parent directory (silently).
+        cd - > /dev/null  # Return to the parent directory (silent).
         echo "Done with $repo"
         echo "-----------------------------"
     fi
