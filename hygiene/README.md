@@ -1,48 +1,40 @@
 # Repo Hygiene Fix-Script Generator
 
-A **Bash** helper that scans a directory of Git repositories against a “model” repository and generates a self-contained fix script. You can also apply fixes automatically.
-
-- [Repo Hygiene Fix-Script Generator](#repo-hygiene-fix-script-generator)
-  - [Features](#features)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-  - [Usage](#usage)
-  - [Example Directory Layout](#example-directory-layout)
-  - [Sample Run](#sample-run)
-    - [1) Dry-run: Generate fix script only](#1-dry-run-generate-fix-script-only)
-      - [Excerpt from `fix-repos.sh`](#excerpt-from-fix-repossh)
-    - [2) Apply: Generate \& execute](#2-apply-generate--execute)
-  - [Script Details](#script-details)
-  - [Testing](#testing)
-  - [License](#license)
+A **Bash** utility that scans a directory tree of Git repositories, compares each repo to a "model" repository, and generates a self-contained **fix script** to bring them into compliance. Optionally, it can apply fixes automatically. All settings are provided via a JSON configuration file.
 
 ---
 
 ## Features
 
-- Reads **all settings** from a single JSON config
-- Scans each subfolder for a `.git` directory (i.e. real Git repos)
-- Validates presence of required **directories** and **files** (including dot-files and nested paths)
-- For each existing file, compares line count vs. the model repo
-- Emits a **fix script** (`fix-script.sh` by default) in which:
-  - **All non-action** lines are commented out (`# …`)
-  - `echo` lines announce which repo and items are being updated
-  - `mkdir -p` and `cp` lines are active—ready to run
-- Optional `--apply` mode runs the generated fix script immediately
+- **Configuration via JSON**:
+  - `scan_dir`: The directory where the script starts looking for Git repositories.
+  - `model_repo`: Your "gold-standard" repository.
+  - `output_file`: The name of the generated fix script.
+  - `required_dirs`: Array of directories each repo must contain.
+  - `required_files`: Array of files (including dot-files and nested paths) each repo must have.
+- **Dependency Check**: Ensures `jq` is installed before proceeding.
+- **Backup**: Automatically backs up any existing fix script by renaming it with a timestamp.
+- **Status Block**: For each repo, outputs a commented status block showing:
+  - For directories: Whether they exist or are missing.
+  - For files: Whether they exist, and if so, the line count in the repo versus the model.
+- **Active Fix Commands**: Generates active commands (`echo`, `mkdir -p`, and `cp`) to add any missing items.
+- **Skip Model Repo**: Skips scanning the model repository if it's within the scan directory.
+- **Optional Application**: With the `--apply` flag, the generated fix script runs immediately to fix the repositories.
 
 ---
 
 ## Prerequisites
 
-- **Bash** (GNU Bash 4+)
+- **GNU Bash 4+**
 - **jq** (JSON processor)
 
-```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y jq
+If `jq` is not installed, you can install it as follows:
 
-# macOS (Homebrew)
+```bash
+# Ubuntu/Debian
+sudo apt-get install jq
+
+# macOS (using Homebrew)
 brew install jq
 ```
 
@@ -51,7 +43,7 @@ brew install jq
 ## Installation
 
 1. Clone or download this repository.
-2. Make the script executable:
+2. Make the main script executable:
 
    ```bash
    chmod +x repo-hygiene.sh
@@ -61,40 +53,49 @@ brew install jq
 
 ## Configuration
 
-Create a JSON file (e.g. `config.json`) describing:
-
-- **model_repo**: path to your “gold-standard” repository
-- **required_dirs**: array of directory names/paths to enforce
-- **required_files**: array of file paths (including dot-files and nested paths)
+Create a JSON file (e.g., `config.json`) in the same folder as `repo-hygiene.sh`:
 
 ```json
 {
-  "model_repo": "../my-model-repo",
+  "scan_dir": "repos",
+  "model_repo": "model-repo",
+  "output_file": "fix-script.sh",
   "required_dirs": [".vscode", ".github", "harness"],
   "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
 }
 ```
 
-Place `config.json` alongside `repo-hygiene.sh`.
+- **scan_dir**: The directory to start scanning (e.g., where your target repos reside).
+- **model_repo**: The path to your reference repository.
+- **output_file**: The name of the generated fix script.
+- **required_dirs** and **required_files**: Lists of directories and files expected in each repository.
 
 ---
 
 ## Usage
 
+Run the script specifying your configuration file with `-c`:
+
 ```bash
-./repo-hygiene.sh \
-  -i config.json \
-  [-o fix-script.sh] \
-  [--apply] \
-  [-h]
+./repo-hygiene.sh -c config.json [--apply]
 ```
 
-| Flag        | Description                                                        |
-| ----------- | ------------------------------------------------------------------ |
-| `-i <file>` | **(Required)** Path to the JSON config file                        |
-| `-o <file>` | Output fix script path (default: `fix-script.sh`)                  |
-| `--apply`   | After generating the script, immediately execute it to apply fixes |
-| `-h`        | Show help and exit                                                 |
+- `-c <file>`: JSON config file (required).
+- `-o <file>`: (Optional) Specify a different output fix-script file name.
+- `--apply`: After generating the fix script, run it immediately to apply the fixes.
+- `-h`: Display help.
+
+Example (dry run):
+
+```bash
+./repo-hygiene.sh -c config.json
+```
+
+Example (apply fixes immediately):
+
+```bash
+./repo-hygiene.sh -c config.json --apply
+```
 
 ---
 
@@ -103,7 +104,7 @@ Place `config.json` alongside `repo-hygiene.sh`.
 ```
 .
 ├── config.json
-├── my-model-repo/               # reference “model” repo
+├── model-repo/             # Your gold-standard repository
 │   ├── .git/
 │   ├── .gitignore
 │   ├── pre-commit.yaml
@@ -111,103 +112,88 @@ Place `config.json` alongside `repo-hygiene.sh`.
 │   │   └── extensions.json
 │   └── harness/
 ├── repo-hygiene.sh
-└── repos/
-    ├── repoA/
-    │   ├── .git/
-    │   └── .gitignore      # 12 lines
-    ├── repoB/
-    │   └── .git/
-    └── repoC/
-        ├── .git/
-        └── .github/
+└── repos/                  # scan_dir
+    ├── repoA/              # Has .git; may have some missing files/dirs
+    ├── repoB/              # Has .git; likely missing required items
+    └── repoC/              # etc.
 ```
 
 ---
 
-## Sample Run
+## What the Script Does
 
-### 1) Dry-run: Generate fix script only
+1. **Dependency Check**: Verifies that `jq` is installed.
+2. **Loads Config**: Reads settings from the provided JSON file.
+3. **Scans for Repos**: Looks under `scan_dir` for directories containing a `.git` folder, skipping the model repo.
+4. **Checks for Required Items**: For each repo, it checks that the required directories and files exist. For files, it compares the line count in the target repo with that of the model repository.
+5. **Generates a Fix Script**:
+   - Generates a commented status block for each repo showing what is present and what's missing.
+   - Emits active commands (`mkdir` and `cp`) to create missing directories and copy missing files.
+6. **Backup**: If an output fix script already exists, it is backed up with a timestamp.
+7. **Optional Apply**: With `--apply`, the fix script is executed immediately.
 
-```bash
-cd repos
-../repo-hygiene.sh -i ../config.json -o fix-repos.sh
-```
+---
 
-#### Excerpt from `fix-repos.sh`
+## Testing the Script
+
+You can perform a quick test using the following snippet (assuming you have a similar directory structure):
 
 ```bash
 #!/usr/bin/env bash
-# Auto-generated fix script — DO NOT EDIT
-# Model repo : ../my-model-repo
-# Generated on: 2025-06-22T12:00:00+00:00
+set -euo pipefail
 
-# ───────────────────────────────────────
-# Repo: repoA/
-#   Directories:
-#     – DIR .vscode missing
-#     – DIR .github missing
-#   Files:
-#     + FILE .gitignore exists (12 vs 14)
-#     – FILE pre-commit.yaml missing
-#     – FILE .vscode/extensions.json missing
+# Setup test environment
 
-echo ">> Updating repoA/"
-echo " Missing dirs : .vscode .github"
-echo " Missing files: pre-commit.yaml .vscode/extensions.json"
+# Create model repository
+mkdir model-repo && cd model-repo
+git init -q
+echo -e "a\nb\nc" > .gitignore
+echo -e "1\n2\n3\n4" > pre-commit.yaml
+mkdir -p .vscode && echo '{"foo": 1}' > .vscode/extensions.json
+cd ..
 
-mkdir -p "repoA/.vscode"
-cp -r "../my-model-repo/.vscode" "repoA/.vscode"
-mkdir -p "repoA/.github"
-cp -r "../my-model-repo/.github" "repoA/.github"
-cp "../my-model-repo/pre-commit.yaml" "repoA/pre-commit.yaml"
-mkdir -p "repoA/.vscode"
-cp "../my-model-repo/.vscode/extensions.json" "repoA/.vscode/extensions.json"
+# Create target repositories in scan_dir (repos)
+mkdir -p repos/repoA repos/repoB
+cd repos/repoA
+git init -q && echo -e "a\nb" > .gitignore
+cd ../repoB
+git init -q
+cd ..
 
-# ───────────────────────────────────────
-# Repo: repoB/
-#   Directories:
-#     – DIR .vscode missing
-#     – DIR .github missing
-#   Files:
-#     – FILE .gitignore missing
-#     – FILE pre-commit.yaml missing
-#     – FILE .vscode/extensions.json missing
+# Create config file
+cat > config.json <<EOF
+{
+  "scan_dir": "repos",
+  "model_repo": "model-repo",
+  "output_file": "fix-script.sh",
+  "required_dirs": [".vscode", ".github"],
+  "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
+}
+EOF
 
-echo ">> Updating repoB/"
-# … and so on …
+# Run dry run
+../repo-hygiene.sh -c config.json
+cat fix-script.sh
+
+# Optionally, run with --apply to update the repos.
+../repo-hygiene.sh -c config.json --apply
+tree -a
 ```
 
-### 2) Apply: Generate & execute
-
-```bash
-../repo-hygiene.sh -i ../config.json --apply
-```
-
-This will:
-
-1. Backup any existing `fix-script.sh` to `fix-script.sh.YYYYMMDD_HHMMSS.bak`
-2. Generate a fresh `fix-script.sh`
-3. Make it executable
-4. Run it immediately, creating directories and copying files as needed
+After running, you'll see that repositories missing items have had directories created and files copied from the model.
 
 ---
 
-## Script Details
+### Explanation (tl/dr;)
 
-Below is the complete ``.
-Save it in your working directory and run `chmod +x repo-hygiene.sh`
+- **Dependency Check**: Right at the top, the script checks if `jq` is installed. If it isn’t, it prints installation instructions and exits.
 
----
+- **Usage & Config**: The script uses `-c` to take a JSON config file. This JSON sets the scanning directory, the model repo (the gold standard), and the required files and directories. The output fix script name is read from the JSON (with a default).
 
-## Testing
+- **Backup Mechanism**: If an output file with the same name already exists, it is renamed with a timestamp before writing a new one.
 
-1. **Set up a temporary workspace** (see the “Smoke Test” in this repo or copy-paste section below).
-2. **Run a dry-run** and inspect `fix-script.sh`—verify status block, commented lines, and active commands.
-3. **Run with `--apply`**—confirm missing directories/files appear in your target repos.
+- **Scanning & Reporting**: For each repo found in the scan directory (skipping the model repo if it’s inside the scan directory), the script checks for required directories and files. It computes line counts for files, then writes a commented status block to the fix script (indicating what’s present or missing).
 
----
+- **Active Fix Commands**: Only if missing items are detected, the script writes active commands (i.e. commands that are not commented out) to create directories and copy files from the model repo.
 
-## License
-
-MIT © Your Name.
-Feel free to adapt and extend!
+- **Optional Apply**: The fix script can be executed immediately by using the `--apply` flag.
