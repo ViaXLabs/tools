@@ -1,5 +1,7 @@
 {
-  "model_repo": "../my-model-repo",
+  "scan_dir": "repos",
+  "model_repo": "model-repo",
+  "output_file": "fix-script.sh",
   "required_dirs": [".vscode", ".github", "harness"],
   "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
 }
