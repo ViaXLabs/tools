@@ -1,43 +1,55 @@
 # Repo Hygiene Fix-Script Generator
 
-A **Bash** utility that recursively scans a directory tree for Git repositories, compares each repository against a “model” (gold-standard) repository, and generates a self-contained **fix script**. This fix script updates any missing files or directories according to your configuration. Optionally, you can run the fix script immediately to apply the fixes.
+A **Bash** utility that recursively scans a directory tree for Git repositories, compares each repository against a “model” (gold-standard) repository, and generates a self-contained **fix script** to update any missing files or directories. Optionally, the generated fix script can be executed immediately.
 
 All configuration is provided via a single JSON file.
+
+- [Repo Hygiene Fix-Script Generator](#repo-hygiene-fix-script-generator)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+  - [Usage](#usage)
+    - [Examples](#examples)
+  - [Example Directory Layout](#example-directory-layout)
+  - [How It Works](#how-it-works)
+  - [Testing the Script](#testing-the-script)
+    - [Explanation Summary](#explanation-summary)
 
 ---
 
 ## Features
 
 - **Configuration via JSON:**
-  - **scan_dir**: The root directory where the scan begins (e.g., `/repo` or `/repo/Team1`).
-  - **model_repo**: Path to your gold-standard repository (which contains the correct files/directories).
-  - **output_file**: The filename (and optionally, path) for the generated fix script.
-  - **required_dirs**: An array of directories that each repository must have.
-  - **required_files**: An array of file paths (supports dot-files and nested files) that each repository must have.
+  - **scan_dir**: The starting directory to scan for Git repositories (e.g., `/repo` or `/repo/Team1`). You can use `~` to refer to your HOME directory.
+  - **model_repo**: The path to your gold-standard repository.
+  - **output_file**: The filename (and optionally path) for the generated fix script.
+  - **required_dirs**: An array of directories that each repository must contain.
+  - **required_files**: An array of file paths (including dot-files and nested paths) that each repository must have.
 - **Tilde Expansion:**
-  - Any path beginning with `~` is automatically expanded to your HOME directory.
+  - Any path starting with `~` is automatically expanded to the HOME directory.
 - **Recursive Scanning:**
-  - The script recursively scans the specified `scan_dir`, handling nested structures (e.g., team folders).
+  - The script scans the entire tree under `scan_dir`, handling nested folders (e.g., team folders).
 - **Model Repository Exclusion:**
-  - If the model repository is inside the scan directory, it is skipped.
+  - If the model repository is found within the scan directory, it is skipped.
 - **Backup:**
-  - An existing fix script at the output location is backed up (renamed with a timestamp) before generating a new one.
+  - An existing fix script at the output location is backed up with a timestamp before generating a new one.
 - **Status Blocks & Fix Commands:**
-  - For each repository, a commented status block shows what’s present (with line count comparisons for files) and what is missing.
-  - Active commands (e.g., `mkdir -p` and `cp`) follow for any missing items.
-- **Optional Application:**
-  - With the `--apply` flag, the generated fix script is executed immediately.
-- **Dependency Check:**
-  - The script ensures that `jq` is installed, displaying instructions if it isn’t.
+  - For each repository, a **commented status block** is generated which shows which required directories and files exist (with file line count comparisons) and which are missing.
+  - If any items are missing, **active commands** (using `mkdir -p` and `cp`) are emitted to fix them.
+- **Optional Immediate Application:**
+  - Using the `--apply` flag, the generated fix script is run immediately.
+- **Bash v3 Compatibility:**
+  - The script uses while‑read loops instead of `readarray` and parallel indexed arrays instead of associative arrays so that it works on Bash version 3.
 
 ---
 
 ## Prerequisites
 
-- **GNU Bash 4+**
-- **jq** (JSON command-line parser)
+- **GNU Bash 3+**
+- **jq** – JSON command-line processor
 
-If `jq` isn’t installed, try:
+If `jq` isn’t installed, use one of the following commands:
 
 ```bash
 # Ubuntu/Debian:
@@ -45,12 +57,6 @@ sudo apt-get install jq
 
 # macOS (Homebrew):
 brew install jq
-
-# Fedora/RHEL:
-sudo dnf install jq
-
-# Arch Linux:
-sudo pacman -S jq
 ```
 
 ---
@@ -67,7 +73,7 @@ sudo pacman -S jq
 
 ## Configuration
 
-Create a JSON file (e.g., `config.json`) in the same folder as `repo-hygiene.sh`. Example:
+Create a JSON configuration file (e.g., `config.json`) in the same folder as `repo-hygiene.sh`. For example:
 
 ```json
 {
@@ -79,10 +85,10 @@ Create a JSON file (e.g., `config.json`) in the same folder as `repo-hygiene.sh`
 }
 ```
 
-- **scan_dir**: The base directory for scanning (you may use `~` to represent your HOME directory).
+- **scan_dir**: The directory from which to start scanning for Git repositories (you can use an absolute path or paths starting with `~`).
 - **model_repo**: The path to your reference repository.
-- **output_file**: The name/path for the generated fix script.
-- **required_dirs** and **required_files**: Items that must exist in every repository.
+- **output_file**: The target filename for the generated fix script.
+- **required_dirs** & **required_files**: Lists of directories and files expected in every repository.
 
 ---
 
@@ -96,18 +102,18 @@ Run the script by specifying your configuration file:
 
 **Options:**
 
-- `-c <file>`: (Required) JSON config file.
-- `-o <file>`: (Optional) Override the output fix script filename from the config.
-- `--apply` : (Optional) Immediately run the generated fix script.
-- `-h` : Show help.
+- `-c <file>` : (Required) Path to the JSON config file.
+- `-o <file>` : (Optional) Specify a different output file for the fix script.
+- `--apply` : (Optional) Immediately run the generated fix script after creation.
+- `-h` : Show the help message and exit.
 
-### Examples:
+### Examples
 
-- **Generate only (dry-run):**
+- **Dry Run (generate fix script only):**
   ```bash
   ./repo-hygiene.sh -c config.json
   ```
-- **Generate and apply fixes:**
+- **Generate and Apply Fixes Immediately:**
   ```bash
   ./repo-hygiene.sh -c config.json --apply
   ```
@@ -116,7 +122,7 @@ Run the script by specifying your configuration file:
 
 ## Example Directory Layout
 
-For example, your directory structure might look like:
+Suppose your directory structure is as follows:
 
 ```
 .
@@ -137,32 +143,34 @@ For example, your directory structure might look like:
         └── repoC/          # Yet another Git repository
 ```
 
+The script will recursively scan “repos” and (for example) produce a fix script to add missing directories or files by copying from “model-repo”.
+
 ---
 
 ## How It Works
 
 1. **Dependency Check:**
-   The script verifies that `jq` is installed.
+   The script first checks whether `jq` is installed and provides installation instructions if it isn’t.
 2. **Configuration Loading & Tilde Expansion:**
-   Reads settings from `config.json` and expands any path starting with `~` to your HOME directory.
+   It reads configuration values from the JSON file and expands any path that begins with `~` to the HOME directory.
 3. **Backup:**
-   If an output fix script already exists, it is backed up with a timestamp.
+   If the output file already exists, it is backed up (renamed with a timestamp) before a new fix script is created.
 4. **Recursive Scan:**
-   All `.git` directories under `scan_dir` are located using `find`. The parent of each `.git` folder is considered a repository root. The model repository is skipped.
+   It uses the `find` command to locate all `.git` directories under the specified `scan_dir` and treats the parent of each as a repository root. The model repository is skipped.
 5. **Status Block Generation:**
-   For each repository, a commented status block shows which required directories/files exist (with file line count comparisons) and which are missing.
-6. **Fix Commands Generation:**
-   If any required items are missing, active commands (`mkdir -p` and `cp`) are generated to fix them.
+   For each repository, a commented status block is added to the fix script showing which required directories exist and which files exist (with a comparison of line counts to the model file) alongside those that are missing.
+6. **Fix Command Generation:**
+   If any required items are missing, active commands (e.g., `mkdir -p` and `cp`) are appended to the fix script.
 7. **Optional Execution:**
-   If the `--apply` flag is provided, the script runs the generated fix script immediately.
+   If you run the script with the `--apply` flag, the generated fix script is executed immediately.
 8. **Output:**
-   The fix script is generated at the specified path and is made executable.
+   Finally, the fix script is made executable and its location is reported.
 
 ---
 
 ## Testing the Script
 
-You can test the script with the following steps:
+Follow these steps to test the script:
 
 1. **Set Up a Test Environment:**
 
@@ -171,14 +179,12 @@ You can test the script with the following steps:
    mkdir model-repo && cd model-repo
    git init -q
    echo -e "line1\nline2\nline3" > .gitignore
-   echo -e "steps1\nsteps2\nsteps3\nsteps4" > pre-commit.yaml
+   echo -e "step1\nstep2\nstep3\nstep4" > pre-commit.yaml
    mkdir -p .vscode && echo '{"foo":1}' > .vscode/extensions.json
    cd ..
 
    # Create target repositories under the scan directory.
    mkdir -p repos/Team1/repoA repos/Team1/repoB repos/Team2/repoC
-
-   # Initialize Git in each target repository.
    for d in repos/Team1/repoA repos/Team1/repoB repos/Team2/repoC; do
      (cd "$d" && git init -q)
    done
@@ -195,12 +201,14 @@ You can test the script with the following steps:
    EOF
    ```
 
-2. **Dry Run: Generate the Fix Script Only**
+2. **Dry Run (Generate Fix Script Only):**
 
    ```bash
    ./repo-hygiene.sh -c config.json
    cat fix-script.sh
    ```
+
+   The generated fix script will have commented status blocks for each repository and active commands for adding missing items.
 
 3. **Apply Fixes Immediately:**
 
@@ -209,23 +217,15 @@ You can test the script with the following steps:
    tree -a
    ```
 
-   After running these commands, you should see that each target repository has been updated with any missing directories or files from the model repository.
+   After running these commands, check that the target repositories have been updated with the missing directories and files copied from the model repository.
 
 ---
 
 ### Explanation Summary
 
-- **Tilde Expansion:**
-  The `expand_tilde()` function ensures that any path starting with `~` is correctly expanded to the user's HOME directory.
-
-- **Configuration Loading:**
-  The script loads the scan directory, model repository, and output fix script filename from a JSON config file. It uses `readarray` to load the arrays of required directories and files.
-
-- **Backup:**
-  Before generating a new fix script, an existing output file (if present) is backed up with a timestamp.
-
-- **Scanning & Fix Generation:**
-  The `find` command is used to recursively locate all `.git` directories under `scan_dir`. For each repository, the script writes a commented status block with information about existing/missing directories and files (including file line counts), then emits active commands to create missing items.
-
-- **Optional Application:**
-  When run with `--apply`, the script executes the generated fix script immediately.
+- **Tilde Expansion:** A small function in the script ensures that any paths beginning with `~` are expanded correctly.
+- **JSON Configuration:** All necessary settings (scan directory, model repository, output file, required items) are loaded from a JSON file.
+- **Bash v3 Compatibility:** The script replaces newer commands like “readarray” with while-read loops and uses parallel indexed arrays instead of associative arrays.
+- **Backup and Recursive Scan:** The script backs up any existing output file and recursively scans for Git repositories using the `find` command, skipping the model repository if it’s within the scan directory.
+- **Status and Fix Commands:** For each repository, the status (existing/missing directories and files with line count comparisons) is output as commented blocks, and active commands are appended only for missing items.
+- **Optional Immediate Fix:** The `--apply` flag causes the script to run the generated fix script immediately.

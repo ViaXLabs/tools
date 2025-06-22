@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # repo-hygiene.sh
 #
-# This script scans a directory tree for Git repositories, compares each
-# repository against a "model" repository (the gold standard), and generates
-# a self-contained fix script to update any missing files or directories.
-#
-# All configuration is provided via a JSON file.
+# This script recursively scans a directory tree for Git repositories,
+# compares each repository against a "model" (gold-standard) repository,
+# and generates a self-contained fix script to update any missing files
+# or directories. It loads its settings from a JSON configuration file.
+# Optionally, the generated fix script can be run immediately using --apply.
 #
 # Dependencies:
-#   - GNU bash 4+
+#   - GNU Bash (compatible with Bash v3)
 #   - jq (for JSON parsing)
 #
-# If 'jq' is not installed, the script prints installation instructions and exits.
+# If jq is not installed, the script prints installation instructions and exits.
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -29,22 +29,21 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # -----------------------------------------------------------------------------
-# Function to expand '~' to $HOME if the path starts with '~'
+# Function to expand '~' at the beginning of a path.
 expand_tilde() {
-  # If the first character is '~', substitute it with $HOME.
   [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
 # -----------------------------------------------------------------------------
-# Usage: show help and exit.
+# Usage: display help message and exit.
 usage() {
   cat <<EOF
 Usage: ${0##*/} -c <config.json> [-o <output_fix_script>] [--apply] [-h]
 
-  -c <file>   Path to JSON config file (required)
-  -o <file>   Output fix script file (default: value of "output_file" in config)
-  --apply     After generating fix script, run it immediately to apply fixes
-  -h          Show this help message and exit
+  -c <file>   Path to the JSON config file (required).
+  -o <file>   Output fix script file (default: value of "output_file" in config).
+  --apply     After generating the fix script, run it immediately to apply fixes.
+  -h          Show this help message and exit.
 
 The JSON config must include:
   scan_dir       : Starting directory to scan for Git repositories.
@@ -58,16 +57,8 @@ Example config.json:
   "scan_dir": "repos",
   "model_repo": "model-repo",
   "output_file": "fix-script.sh",
-  "required_dirs": [
-    ".vscode",
-    ".github",
-    "harness"
-  ],
-  "required_files": [
-    ".gitignore",
-    "pre-commit.yaml",
-    ".vscode/extensions.json"
-  ]
+  "required_dirs": [".vscode", ".github", "harness"],
+  "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
 }
 EOF
   exit "${1:-0}"
@@ -78,6 +69,7 @@ EOF
 CONFIG=""
 OUTFILE=""
 APPLY=0
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -c) CONFIG=$2; shift 2 ;;
@@ -89,11 +81,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # -----------------------------------------------------------------------------
-# 2) Validate inputs and set defaults.
+# 2) Validate inputs & set defaults.
 [[ -n $CONFIG ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
 [[ -f $CONFIG ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
-
-# If OUTFILE wasn’t provided via command-line, load it from config.
+# If OUTFILE is not provided, load it from the JSON config.
 if [[ -z $OUTFILE ]]; then
   OUTFILE=$(jq -r '.output_file // "fix-script.sh"' "$CONFIG")
 fi
@@ -105,21 +96,27 @@ MODEL_REPO=$(expand_tilde "$(jq -r '.model_repo // empty' "$CONFIG")")
 OUTFILE=$(expand_tilde "$OUTFILE")
 
 # -----------------------------------------------------------------------------
-# 3) Load arrays for required directories and files from JSON.
-# Use readarray as a replacement for mapfile.
-readarray -t REQUIRED_DIRS < <(jq -r '.required_dirs[]' "$CONFIG")
-readarray -t REQUIRED_FILES < <(jq -r '.required_files[]' "$CONFIG")
+# 3) Load required directories and files arrays.
+# Since Bash v3 doesn’t have readarray, we use a while-read loop.
+REQUIRED_DIRS=()
+while IFS= read -r line; do
+  REQUIRED_DIRS+=("$line")
+done < <(jq -r '.required_dirs[]' "$CONFIG")
 
-# Validate that SCAN_DIR and MODEL_REPO are provided.
+REQUIRED_FILES=()
+while IFS= read -r line; do
+  REQUIRED_FILES+=("$line")
+done < <(jq -r '.required_files[]' "$CONFIG")
+
+# Validate that SCAN_DIR and MODEL_REPO exist and are valid.
 for var in SCAN_DIR MODEL_REPO; do
   [[ -n "${!var}" ]] || { echo "ERROR: '$var' missing in config." >&2; exit 3; }
 done
-
 [[ -d $SCAN_DIR ]] || { echo "ERROR: scan_dir '$SCAN_DIR' not found." >&2; exit 4; }
 [[ -d $MODEL_REPO/.git ]] || { echo "ERROR: model_repo '$MODEL_REPO' is not a Git repo." >&2; exit 5; }
 
 # -----------------------------------------------------------------------------
-# 4) Backup existing output file if one exists.
+# 4) Backup existing output file if it already exists.
 if [[ -f $OUTFILE ]]; then
   ts=$(date +%Y%m%d_%H%M%S)
   backup="${OUTFILE}.${ts}.bak"
@@ -128,7 +125,7 @@ if [[ -f $OUTFILE ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 5) Write the header of the new fix script.
+# 5) Write header for the new fix script.
 cat > "$OUTFILE" <<EOF
 #!/usr/bin/env bash
 # Auto-generated fix script — DO NOT EDIT
@@ -140,21 +137,18 @@ EOF
 
 # -----------------------------------------------------------------------------
 # 6) Recursively scan SCAN_DIR for Git repositories.
-#     We use the find command to locate all ".git" directories.
+# Use find to locate all ".git" directories.
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
-
-  # Skip if the repository is the model_repo (if its path begins with model_repo).
+  # Skip if this repository is within MODEL_REPO.
   if [[ "$(realpath "$repo")" == "$(realpath "$MODEL_REPO")"* ]]; then
     continue
   fi
 
-  # Initialize arrays to track present vs. missing items.
-  present_dirs=(); missing_dirs=()
-  declare -A file_lines  # Maps filename -> "repoLines:modelLines"
-  missing_files=()
-
-  # Check required directories.
+  # -----------------------------------------------------------------------------
+  # 7) Check required directories.
+  present_dirs=()
+  missing_dirs=()
   for d in "${REQUIRED_DIRS[@]}"; do
     if [[ -d "$repo$d" ]]; then
       present_dirs+=("$d")
@@ -163,21 +157,26 @@ while IFS= read -r gitdir; do
     fi
   done
 
-  # Check required files and record line counts if they exist.
+  # -----------------------------------------------------------------------------
+  # 8) Check required files.
+  # Since Bash v3 lacks associative arrays, we use a parallel index array.
+  missing_files=()
+  FILE_RESULTS=() # Each element will be "repo_lines:model_lines" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"           # Path in the target repo.
-    mp="$MODEL_REPO/$f"    # Path in the model repo.
+    rp="$repo$f"    # File in target repository.
+    mp="$MODEL_REPO/$f"  # File in model repository.
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
       ml=$(wc -l < "$mp" | tr -d ' ')
-      file_lines["$f"]="$rl:$ml"
+      FILE_RESULTS+=("$rl:$ml")
     else
+      FILE_RESULTS+=("")
       missing_files+=("$f")
     fi
   done
 
   # -----------------------------------------------------------------------------
-  # 7) Emit a commented status block for this repository.
+  # 9) Emit commented status block for this repository.
   {
     echo "# ───────────────────────────────────────"
     echo "# Repo: $repo"
@@ -190,31 +189,32 @@ while IFS= read -r gitdir; do
       fi
     done
     echo "#   Files:"
+    i=0
     for f in "${REQUIRED_FILES[@]}"; do
-      if [[ -n ${file_lines[$f]:-} ]]; then
-        IFS=':' read -r rl ml <<< "${file_lines[$f]}"
+      result="${FILE_RESULTS[$i]}"
+      if [[ -n "$result" ]]; then
+        IFS=':' read -r rl ml <<< "$result"
         echo "#     + FILE $f exists ($rl vs $ml)"
       else
         echo "#     – FILE $f missing"
       fi
+      i=$((i+1))
     done
     echo "#"
   } >> "$OUTFILE"
 
   # -----------------------------------------------------------------------------
-  # 8) Emit active fix commands if required items are missing.
+  # 10) Emit active fix commands if any required items are missing.
   if (( ${#missing_dirs[@]} + ${#missing_files[@]} )); then
     {
       echo "echo \">> Updating $repo\""
       echo "echo \" Missing dirs : ${missing_dirs[*]}\""
       echo "echo \" Missing files: ${missing_files[*]}\""
       echo
-      # For each missing directory, create it and copy from the model repository.
       for d in "${missing_dirs[@]}"; do
         echo "mkdir -p \"$repo$d\""
         echo "cp -r \"$MODEL_REPO/$d\" \"$repo$d\""
       done
-      # For each missing file, create necessary parent directories and copy the file.
       for f in "${missing_files[@]}"; do
         dp=\$(dirname "$f")
         [[ \$dp != "." ]] && echo "mkdir -p \"$repo\$dp\""
@@ -229,12 +229,12 @@ while IFS= read -r gitdir; do
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
 # -----------------------------------------------------------------------------
-# 9) Finalize: make the output fix script executable.
+# 11) Finalize the fix script by making it executable.
 chmod +x "${OUTFILE}"
 echo "Fix-script generated at: ${OUTFILE}"
 
 # -----------------------------------------------------------------------------
-# 10) Optionally, apply the fix script immediately.
+# 12) Optionally, apply the fix script immediately.
 if [[ "${APPLY:-0}" -eq 1 ]]; then
   echo "Running ${OUTFILE}..."
   ./"${OUTFILE}"
