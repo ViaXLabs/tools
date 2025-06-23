@@ -146,7 +146,7 @@ EOF
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
-  # Skip if the repository is inside MODEL_REPO.
+  # Skip if this repository is inside MODEL_REPO.
   if [[ "$(abspath "$repo")" == "$(abspath "$MODEL_REPO")"* ]]; then
     continue
   fi
@@ -169,7 +169,7 @@ while IFS= read -r gitdir; do
   missing_files=()
   FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"      # File path in target repository.
+    rp="$repo$f"    # File path in target repository.
     mp="$MODEL_REPO/$f"  # Corresponding file in model repository.
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
@@ -199,7 +199,6 @@ while IFS= read -r gitdir; do
     for f in "${REQUIRED_FILES[@]}"; do
       result="${FILE_RESULTS[$i]}"
       if [[ -n "$result" ]]; then
-        # Instead of using here-string syntax, use cut to split the result.
         rl=$(echo "$result" | cut -d: -f1)
         ml=$(echo "$result" | cut -d: -f2)
         echo "#     + FILE $f exists ($rl vs $ml)"
@@ -213,7 +212,8 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 10) Emit active fix commands if any required items are missing.
-  if (( ${#missing_dirs[@]} + ${#missing_files[@]} )); then
+  total_missing=$((${#missing_dirs[@]} + ${#missing_files[@]}))
+  if [ $total_missing -gt 0 ]; then
     {
       echo "echo \">> Updating $repo\""
       echo "echo \" Missing dirs : ${missing_dirs[*]}\""
@@ -225,7 +225,9 @@ while IFS= read -r gitdir; do
       done
       for f in "${missing_files[@]}"; do
         dp=\$(dirname "$f")
-        [[ \$dp != "." ]] && echo "mkdir -p \"$repo\$dp\""
+        if [ "\$dp" != "." ]; then
+          echo "mkdir -p \"$repo\$dp\""
+        fi
         echo "cp \"$MODEL_REPO/$f\" \"$repo$f\""
       done
       echo
@@ -243,7 +245,7 @@ echo "Fix-script generated at: ${OUTFILE}"
 
 # -----------------------------------------------------------------------------
 # 12) Optionally, apply the fix script immediately.
-if [[ "${APPLY:-0}" -eq 1 ]]; then
+if [ "${APPLY:-0}" -eq 1 ]; then
   echo "Running ${OUTFILE}..."
   ./"${OUTFILE}"
 fi
