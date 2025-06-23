@@ -5,7 +5,7 @@
 # compares each repository against a "model" (gold-standard) repository, and
 # generates a self-contained fix script to update any missing files or directories.
 #
-# All settings are provided via a JSON configuration file.
+# All configuration is provided via a JSON configuration file.
 #
 # Dependencies:
 #   - GNU Bash (compatible with Bash 3.2)
@@ -35,7 +35,7 @@ expand_tilde() {
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore the tilde in a path if it starts with $HOME.
+# Function to restore ~ in a path (if it begins with $HOME) for output.
 restore_home() {
   local path="$1"
   if [[ "$path" == "$HOME"* ]]; then
@@ -172,15 +172,16 @@ EOF
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
-  # Initialize arrays to ensure they are always defined.
-  present_dirs=()
-  missing_dirs=()
-  missing_files=()
-
   # Skip if this repository's absolute path begins with the model_repo's absolute path.
   if echo "`abspath "$repo"`" | grep -q "^`abspath "$MODEL_REPO"`"; then
     continue
   fi
+
+  # Initialize arrays explicitly to avoid unbound variable errors.
+  present_dirs=()
+  missing_dirs=()
+  missing_files=()
+  FILE_RESULTS=()
 
   # -----------------------------------------------------------------------------
   # 7) Check required directories.
@@ -195,7 +196,6 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 8) Check required files.
-  FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
     file_path=$(join_path "$repo" "$f")
     model_file=$(join_path "$MODEL_REPO" "$f")
