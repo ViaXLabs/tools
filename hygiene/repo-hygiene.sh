@@ -29,9 +29,22 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # -----------------------------------------------------------------------------
-# Function to expand '~' at the beginning of a path to $HOME.
+# Function to expand '~' at the beginning of a path to the user's HOME directory.
 expand_tilde() {
   [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
+}
+
+# -----------------------------------------------------------------------------
+# Function to "restore" the tilde in a path. If the path starts with $HOME,
+# it is converted back to "~" so that the output fix script shows "~" instead
+# of the full absolute path.
+restore_home() {
+  local path="$1"
+  if [[ "$path" == "$HOME"* ]]; then
+    echo "~${path#$HOME}"
+  else
+    echo "$path"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -45,7 +58,7 @@ join_path() {
 }
 
 # -----------------------------------------------------------------------------
-# Function to join array elements with a delimiter.
+# Function to join array elements with a given delimiter.
 join_by() {
   local delimiter="$1"; shift
   echo "$*"
@@ -95,8 +108,8 @@ APPLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -c)  CONFIG=$2; shift 2 ;;
-    -o)  OUTFILE=$2; shift 2 ;;
+    -c) CONFIG=$2; shift 2 ;;
+    -o) OUTFILE=$2; shift 2 ;;
     --apply) APPLY=1; shift ;;
     -h) usage 0 ;;
     *) echo "Unknown argument: $1" >&2; usage 1 ;;
@@ -113,6 +126,7 @@ fi
 
 # -----------------------------------------------------------------------------
 # Expand '~' in important paths.
+# (For internal use we expand tilde—and later, when writing output, we restore it.)
 SCAN_DIR=$(expand_tilde "$(jq -r '.scan_dir // empty' "$CONFIG")")
 MODEL_REPO=$(expand_tilde "$(jq -r '.model_repo // empty' "$CONFIG")")
 OUTFILE=$(expand_tilde "$OUTFILE")
@@ -147,11 +161,12 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5) Write the header for the new fix script.
+# We use restore_home so that any paths in the header use ~.
 cat > "$OUTFILE" <<EOF
 #!/usr/bin/env bash
 # Auto-generated fix script — DO NOT EDIT
-# scan_dir    : $SCAN_DIR
-# model_repo  : $MODEL_REPO
+# scan_dir    : $(restore_home "$SCAN_DIR")
+# model_repo  : $(restore_home "$MODEL_REPO")
 # Generated on: $(date +"%Y-%m-%dT%H:%M:%S")
 EOF
 
@@ -199,7 +214,7 @@ while IFS= read -r gitdir; do
   # 9) Emit a commented status block for this repository.
   {
     echo "# ───────────────────────────────────────"
-    echo "# Repo: $repo"
+    echo "# Repo: $(restore_home "$repo")"
     echo "#   Directories:"
     for d in "${REQUIRED_DIRS[@]}"; do
       if [[ " ${present_dirs[*]:-} " == *" $d "* ]]; then
@@ -215,7 +230,7 @@ while IFS= read -r gitdir; do
       if [[ -n "$result" ]]; then
         rl=$(echo "$result" | cut -d: -f1)
         ml=$(echo "$result" | cut -d: -f2)
-        echo "#     + FILE $f exists ($rl vs $ml)"
+        echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl)"
       else
         echo "#     – FILE $f missing"
       fi
@@ -228,42 +243,51 @@ while IFS= read -r gitdir; do
   # 10) Emit active fix commands if any required items are missing.
   total_missing=`expr ${#missing_dirs[@]} + ${#missing_files[@]}`
   if [ "$total_missing" -gt 0 ]; then
-    missing_dirs_joined=$(join_by " " "${missing_dirs[@]}")
-    missing_files_joined=$(join_by " " "${missing_files[@]}")
     {
-      echo "echo \">> Updating $repo\""
-      echo "echo \"Missing dirs: $missing_dirs_joined\""
-      echo "echo \"Missing files: $missing_files_joined\""
+      echo "echo \">> Updating $(restore_home "$repo")\""
+      echo "echo \"Missing dirs:\""
+      for d in "${missing_dirs[@]}"; do
+        echo "echo \"  $d\""
+      done
+      echo "echo \"Missing files:\""
+      for f in "${missing_files[@]}"; do
+        echo "echo \"  $f\""
+      done
       echo
       for d in "${missing_dirs[@]}"; do
         dir_path=$(join_path "$repo" "$d")
-        echo "mkdir -p \"$dir_path\""
-        echo "cp -r \"$(join_path "$MODEL_REPO" "$d")\" \"$dir_path\""
+        echo "mkdir -p $(restore_home "$dir_path")"
+        echo "cp -r $(restore_home "$(join_path "$MODEL_REPO" "$d")") $(restore_home "$dir_path")"
       done
       for f in "${missing_files[@]}"; do
         dest=$(join_path "$repo" "$f")
         dp=`dirname "$dest"`
         if [ "$dp" != "$repo" ]; then
-          echo "mkdir -p \"$dp\""
+          echo "mkdir -p $(restore_home "$dp")"
         fi
-        echo "cp \"$(join_path "$MODEL_REPO" "$f")\" \"$dest\""
+        echo "cp $(restore_home "$(join_path "$MODEL_REPO" "$f")") $(restore_home "$dest")"
       done
       echo
     } >> "$OUTFILE"
   else
-    echo "# Repo: $repo is fully compliant — no fixes needed." >> "$OUTFILE"
+    echo "# Repo: $(restore_home "$repo") is fully compliant — no fixes needed." >> "$OUTFILE"
     echo >> "$OUTFILE"
   fi
+
+  # -----------------------------------------------------------------------------
+  # 10.5) Emit a divider line to separate repository blocks.
+  echo "echo \"=======================================================\"" >> "$OUTFILE"
+
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
 # -----------------------------------------------------------------------------
 # 11) Finalize the fix script by making it executable.
 chmod +x "$OUTFILE"
-echo "Fix-script generated at: $OUTFILE"
+echo "Fix-script generated at: $(restore_home "$OUTFILE")"
 
 # -----------------------------------------------------------------------------
 # 12) Optionally, apply the fix script immediately.
 if [ "${APPLY:-0}" -eq 1 ]; then
-  echo "Running $OUTFILE..."
+  echo "Running $(restore_home "$OUTFILE")..."
   ./"$OUTFILE"
 fi
