@@ -202,7 +202,7 @@ while IFS= read -r gitdir; do
     if [[ -f "$file_path" ]]; then
       rl=$(wc -l < "$file_path" | tr -d ' ')
       ml=$(wc -l < "$model_file" | tr -d ' ')
-      # If line counts are equal, get file sizes.
+      # If line counts are equal, also get file sizes.
       if [ "$rl" -eq "$ml" ]; then
         rs=$(wc -c < "$file_path" | tr -d ' ')
         ms=$(wc -c < "$model_file" | tr -d ' ')
@@ -271,16 +271,16 @@ while IFS= read -r gitdir; do
       echo
       for d in "${missing_dirs[@]:-}"; do
         dir_path=$(join_path "$repo" "$d")
-        # Only create the directory; do NOT copy its contents.
-        echo "mkdir -p \"$(restore_home "$dir_path")\""
+        # Create the directory only (do not copy contents)
+        echo "mkdir -p $(restore_home "$dir_path")"
       done
       for f in "${missing_files[@]:-}"; do
         dest=$(join_path "$repo" "$f")
         dp=`dirname "$dest"`
         if [ "$dp" != "$repo" ]; then
-          echo "mkdir -p \"$(restore_home "$dp")\""
+          echo "mkdir -p $(restore_home "$dp")"
         fi
-        echo "cp \"$(restore_home "$(join_path "$MODEL_REPO" "$f")")\" \"$(restore_home "$dest")\""
+        echo "cp $(restore_home "$(join_path "$MODEL_REPO" "$f")") $(restore_home "$dest")"
       done
       echo
     } >> "$OUTFILE"
