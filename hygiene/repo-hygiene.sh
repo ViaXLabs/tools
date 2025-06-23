@@ -5,7 +5,7 @@
 # compares each repository against a "model" (gold-standard) repository, and
 # generates a self-contained fix script to update any missing files or directories.
 #
-# All configuration is provided via a JSON configuration file.
+# All settings are provided via a JSON configuration file.
 #
 # Dependencies:
 #   - GNU Bash (compatible with Bash 3.2)
@@ -35,7 +35,7 @@ expand_tilde() {
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore ~ in a path (if it begins with $HOME) for output.
+# Function to restore the tilde in a path (when the path is within $HOME).
 restore_home() {
   local path="$1"
   if [[ "$path" == "$HOME"* ]]; then
@@ -177,7 +177,7 @@ while IFS= read -r gitdir; do
     continue
   fi
 
-  # Initialize arrays explicitly to avoid unbound variable errors.
+  # Explicitly initialize arrays for each repository iteration.
   present_dirs=()
   missing_dirs=()
   missing_files=()
@@ -240,25 +240,25 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 10) Emit active fix commands if any required items are missing.
-  total_missing=`expr ${#missing_dirs[@]} + ${#missing_files[@]}`
+  total_missing=`expr ${#missing_dirs[@]:-} + ${#missing_files[@]:-}`
   if [ "$total_missing" -gt 0 ]; then
     {
       echo "echo \">> Updating $(restore_home "$repo")\""
       echo "echo \"Missing dirs:\""
-      for d in "${missing_dirs[@]}"; do
+      for d in "${missing_dirs[@]:-}"; do
         echo "echo \"  $d\""
       done
       echo "echo \"Missing files:\""
-      for f in "${missing_files[@]}"; do
+      for f in "${missing_files[@]:-}"; do
         echo "echo \"  $f\""
       done
       echo
-      for d in "${missing_dirs[@]}"; do
+      for d in "${missing_dirs[@]:-}"; do
         dir_path=$(join_path "$repo" "$d")
         echo "mkdir -p \"$(restore_home "$dir_path")\""
         echo "cp -r \"$(restore_home "$(join_path "$MODEL_REPO" "$d")")\" \"$(restore_home "$dir_path")\""
       done
-      for f in "${missing_files[@]}"; do
+      for f in "${missing_files[@]:-}"; do
         dest=$(join_path "$repo" "$f")
         dp=`dirname "$dest"`
         if [ "$dp" != "$repo" ]; then
@@ -275,7 +275,7 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 10.5) Emit a divider line to separate repository blocks.
-  echo "echo \"=======================================================\"">> "$OUTFILE"
+  echo "echo \"=======================================================\"" >> "$OUTFILE"
 
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
