@@ -17,7 +17,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Dependency check: ensure jq is installed.
+# Dependency check
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: 'jq' is not installed." >&2
   echo "Please install it:" >&2
@@ -29,13 +29,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # -----------------------------------------------------------------------------
-# Function to expand '~' at the beginning of a path to the user's HOME directory.
+# Function to expand '~' at the beginning of a path to $HOME.
 expand_tilde() {
   [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore the tilde in a path (when the path is within $HOME).
+# Function to restore tilde in a path (if it starts with $HOME).
 restore_home() {
   local path="$1"
   if [[ "$path" == "$HOME"* ]]; then
@@ -58,8 +58,7 @@ join_path() {
 # -----------------------------------------------------------------------------
 # Function to join array elements with a given delimiter.
 join_by() {
-  local delimiter="$1"
-  shift
+  local delimiter="$1"; shift
   echo "$*"
 }
 
@@ -85,7 +84,7 @@ The JSON config must include:
   model_repo     : Path to your gold-standard repository.
   output_file    : Name for the generated fix script.
   required_dirs  : Array of directories that each repository must contain.
-  required_files : Array of files (including dot-files and nested paths) that each repository must have.
+  required_files : Array of files (including dotfiles and nested paths) that each repository must have.
 
 Example config.json:
 {
@@ -202,7 +201,14 @@ while IFS= read -r gitdir; do
     if [[ -f "$file_path" ]]; then
       rl=$(wc -l < "$file_path" | tr -d ' ')
       ml=$(wc -l < "$model_file" | tr -d ' ')
-      FILE_RESULTS+=("$rl:$ml")
+      # If line counts are equal, append file sizes.
+      if [ "$rl" -eq "$ml" ]; then
+        rs=$(wc -c < "$file_path" | tr -d ' ')
+        ms=$(wc -c < "$model_file" | tr -d ' ')
+        FILE_RESULTS+=("$rl:$ml:$rs:$ms")
+      else
+        FILE_RESULTS+=("$rl:$ml")
+      fi
     else
       FILE_RESULTS+=("")
       missing_files+=("$f")
@@ -227,9 +233,18 @@ while IFS= read -r gitdir; do
     for f in "${REQUIRED_FILES[@]}"; do
       result="${FILE_RESULTS[$i]}"
       if [[ -n "$result" ]]; then
-        rl=$(echo "$result" | cut -d: -f1)
-        ml=$(echo "$result" | cut -d: -f2)
-        echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl)"
+        field_count=$(echo "$result" | awk -F: '{print NF}')
+        if [ "$field_count" -eq 4 ]; then
+          rl=$(echo "$result" | cut -d: -f1)
+          ml=$(echo "$result" | cut -d: -f2)
+          rs=$(echo "$result" | cut -d: -f3)
+          ms=$(echo "$result" | cut -d: -f4)
+          echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl; model size: $ms bytes vs scanned file: $rs bytes)"
+        else
+          rl=$(echo "$result" | cut -d: -f1)
+          ml=$(echo "$result" | cut -d: -f2)
+          echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl)"
+        fi
       else
         echo "#     – FILE $f missing"
       fi
@@ -240,7 +255,7 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 10) Emit active fix commands if any required items are missing.
-  total_missing=`expr ${#missing_dirs[@]:-} + ${#missing_files[@]:-}`
+  total_missing=$(expr ${#missing_dirs[@]:-} + ${#missing_files[@]:-})
   if [ "$total_missing" -gt 0 ]; then
     {
       echo "echo \">> Updating $(restore_home "$repo")\""
