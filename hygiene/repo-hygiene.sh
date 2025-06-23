@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # repo-hygiene.sh
 #
 # This script recursively scans a directory tree for Git repositories,
@@ -17,7 +17,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Dependency check
+# Dependency check: ensure jq is installed.
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: 'jq' is not installed." >&2
   echo "Please install it:" >&2
@@ -29,13 +29,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # -----------------------------------------------------------------------------
-# Function to expand '~' at the beginning of a path to $HOME.
+# Function to expand '~' at the beginning of a path to the user's HOME directory.
 expand_tilde() {
   [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore tilde in a path (if it starts with $HOME).
+# Function to restore the tilde in a path (when the path falls within $HOME).
 restore_home() {
   local path="$1"
   if [[ "$path" == "$HOME"* ]]; then
@@ -58,7 +58,8 @@ join_path() {
 # -----------------------------------------------------------------------------
 # Function to join array elements with a given delimiter.
 join_by() {
-  local delimiter="$1"; shift
+  local delimiter="$1"
+  shift
   echo "$*"
 }
 
@@ -75,7 +76,7 @@ usage() {
 Usage: ${0##*/} -c <config.json> [-o <output_fix_script>] [--apply] [-h]
 
   -c <file>   Path to the JSON config file (required).
-  -o <file>   Output fix script file (default: value of "output_file" in config).
+  -o <file>   Output fix script file (default: repo-hygiene-fix.sh).
   --apply     After generating the fix script, run it immediately to apply fixes.
   -h          Show this help message and exit.
 
@@ -83,14 +84,14 @@ The JSON config must include:
   scan_dir       : Starting directory to scan for Git repositories.
   model_repo     : Path to your gold-standard repository.
   output_file    : Name for the generated fix script.
-  required_dirs  : Array of directories that each repository must contain.
-  required_files : Array of files (including dotfiles and nested paths) that each repository must have.
+  required_dirs  : Array of directories each repository must contain.
+  required_files : Array of files (including dotfiles and nested paths) each repository must have.
 
 Example config.json:
 {
   "scan_dir": "repos",
   "model_repo": "model-repo",
-  "output_file": "fix-script.sh",
+  "output_file": "repo-hygiene-fix.sh",
   "required_dirs": [".vscode", ".github", "harness"],
   "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
 }
@@ -119,7 +120,7 @@ done
 [[ -n "$CONFIG" ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
 [[ -f "$CONFIG" ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
 if [[ -z "$OUTFILE" ]]; then
-  OUTFILE=$(jq -r '.output_file // "fix-script.sh"' "$CONFIG")
+  OUTFILE=$(jq -r '.output_file // "repo-hygiene-fix.sh"' "$CONFIG")
 fi
 
 # -----------------------------------------------------------------------------
@@ -159,7 +160,7 @@ fi
 # -----------------------------------------------------------------------------
 # 5) Write the header for the new fix script.
 cat > "$OUTFILE" <<EOF
-#!/usr/bin/env bash
+#!/bin/bash
 # Auto-generated fix script — DO NOT EDIT
 # scan_dir    : $(restore_home "$SCAN_DIR")
 # model_repo  : $(restore_home "$MODEL_REPO")
@@ -201,7 +202,7 @@ while IFS= read -r gitdir; do
     if [[ -f "$file_path" ]]; then
       rl=$(wc -l < "$file_path" | tr -d ' ')
       ml=$(wc -l < "$model_file" | tr -d ' ')
-      # If line counts are equal, append file sizes.
+      # If line counts are equal, get file sizes.
       if [ "$rl" -eq "$ml" ]; then
         rs=$(wc -c < "$file_path" | tr -d ' ')
         ms=$(wc -c < "$model_file" | tr -d ' ')
