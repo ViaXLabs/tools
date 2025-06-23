@@ -35,9 +35,7 @@ expand_tilde() {
 }
 
 # -----------------------------------------------------------------------------
-# Function to "restore" the tilde in a path. If the path starts with $HOME,
-# it is converted back to "~" so that the output fix script shows "~" instead
-# of the full absolute path.
+# Function to restore the tilde in a path if it starts with $HOME.
 restore_home() {
   local path="$1"
   if [[ "$path" == "$HOME"* ]]; then
@@ -60,7 +58,8 @@ join_path() {
 # -----------------------------------------------------------------------------
 # Function to join array elements with a given delimiter.
 join_by() {
-  local delimiter="$1"; shift
+  local delimiter="$1"
+  shift
   echo "$*"
 }
 
@@ -118,15 +117,14 @@ done
 
 # -----------------------------------------------------------------------------
 # 2) Validate inputs and set defaults.
-[[ -n $CONFIG ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
-[[ -f $CONFIG ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
-if [[ -z $OUTFILE ]]; then
+[[ -n "$CONFIG" ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
+[[ -f "$CONFIG" ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
+if [[ -z "$OUTFILE" ]]; then
   OUTFILE=$(jq -r '.output_file // "fix-script.sh"' "$CONFIG")
 fi
 
 # -----------------------------------------------------------------------------
 # Expand '~' in important paths.
-# (For internal use we expand tilde—and later, when writing output, we restore it.)
 SCAN_DIR=$(expand_tilde "$(jq -r '.scan_dir // empty' "$CONFIG")")
 MODEL_REPO=$(expand_tilde "$(jq -r '.model_repo // empty' "$CONFIG")")
 OUTFILE=$(expand_tilde "$OUTFILE")
@@ -161,7 +159,6 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5) Write the header for the new fix script.
-# We use restore_home so that any paths in the header use ~.
 cat > "$OUTFILE" <<EOF
 #!/usr/bin/env bash
 # Auto-generated fix script — DO NOT EDIT
@@ -175,6 +172,11 @@ EOF
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
+  # Initialize arrays to ensure they are always defined.
+  present_dirs=()
+  missing_dirs=()
+  missing_files=()
+
   # Skip if this repository's absolute path begins with the model_repo's absolute path.
   if echo "`abspath "$repo"`" | grep -q "^`abspath "$MODEL_REPO"`"; then
     continue
@@ -182,8 +184,6 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 7) Check required directories.
-  present_dirs=()
-  missing_dirs=()
   for d in "${REQUIRED_DIRS[@]}"; do
     dir_path=$(join_path "$repo" "$d")
     if [[ -d "$dir_path" ]]; then
@@ -195,7 +195,6 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 8) Check required files.
-  missing_files=()
   FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
     file_path=$(join_path "$repo" "$f")
@@ -256,16 +255,16 @@ while IFS= read -r gitdir; do
       echo
       for d in "${missing_dirs[@]}"; do
         dir_path=$(join_path "$repo" "$d")
-        echo "mkdir -p $(restore_home "$dir_path")"
-        echo "cp -r $(restore_home "$(join_path "$MODEL_REPO" "$d")") $(restore_home "$dir_path")"
+        echo "mkdir -p \"$(restore_home "$dir_path")\""
+        echo "cp -r \"$(restore_home "$(join_path "$MODEL_REPO" "$d")")\" \"$(restore_home "$dir_path")\""
       done
       for f in "${missing_files[@]}"; do
         dest=$(join_path "$repo" "$f")
         dp=`dirname "$dest"`
         if [ "$dp" != "$repo" ]; then
-          echo "mkdir -p $(restore_home "$dp")"
+          echo "mkdir -p \"$(restore_home "$dp")\""
         fi
-        echo "cp $(restore_home "$(join_path "$MODEL_REPO" "$f")") $(restore_home "$dest")"
+        echo "cp \"$(restore_home "$(join_path "$MODEL_REPO" "$f")")\" \"$(restore_home "$dest")\""
       done
       echo
     } >> "$OUTFILE"
@@ -276,7 +275,7 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 10.5) Emit a divider line to separate repository blocks.
-  echo "echo \"=======================================================\"" >> "$OUTFILE"
+  echo "echo \"=======================================================\"">> "$OUTFILE"
 
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
