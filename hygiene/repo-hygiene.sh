@@ -35,6 +35,13 @@ expand_tilde() {
 }
 
 # -----------------------------------------------------------------------------
+# Function to join array elements with a given delimiter.
+join_by() {
+  local delimiter="$1"; shift
+  echo "$*"
+}
+
+# -----------------------------------------------------------------------------
 # Function to return the absolute path of a directory.
 # (Since Bash v3 lacks realpath, we use cd and pwd.)
 abspath() {
@@ -57,7 +64,8 @@ The JSON config must include:
   model_repo     : Path to your gold-standard repository.
   output_file    : Name for the generated fix script.
   required_dirs  : Array of directories that each repository must contain.
-  required_files : Array of files (including dot-files and nested paths) that each repository must have.
+  required_files : Array of files (including dot-files and nested paths) that
+                   each repository must have.
 
 Example config.json:
 {
@@ -104,7 +112,6 @@ OUTFILE=$(expand_tilde "$OUTFILE")
 
 # -----------------------------------------------------------------------------
 # 3) Load arrays for required directories and files from JSON.
-# Bash v3 does not support readarray, so we use while-read loops.
 REQUIRED_DIRS=()
 while IFS= read -r line; do
   REQUIRED_DIRS+=("$line")
@@ -120,7 +127,7 @@ for var in SCAN_DIR MODEL_REPO; do
   [[ -n "${!var}" ]] || { echo "ERROR: '$var' missing in config." >&2; exit 3; }
 done
 [[ -d $SCAN_DIR ]] || { echo "ERROR: scan_dir '$SCAN_DIR' not found." >&2; exit 4; }
-[[ -d $MODEL_REPO/.git ]] || { echo "ERROR: model_repo '$MODEL_REPO' is not a Git repo." >&2; exit 5; }
+[[ -d $(join_path "$MODEL_REPO" ".git") ]] || { echo "ERROR: model_repo '$MODEL_REPO' is not a Git repo." >&2; exit 5; }
 
 # -----------------------------------------------------------------------------
 # 4) Backup existing output file if it already exists.
@@ -146,8 +153,8 @@ EOF
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
-  # Skip if this repository is inside MODEL_REPO.
-  if [[ "`abspath "$repo"`" == "`abspath "$MODEL_REPO"`"* ]]; then
+  # Skip if this repository's absolute path has the model_repo's absolute path as a prefix.
+  if echo "`abspath "$repo"`" | grep -q "^`abspath "$MODEL_REPO"`"; then
     continue
   fi
 
@@ -156,7 +163,8 @@ while IFS= read -r gitdir; do
   present_dirs=()
   missing_dirs=()
   for d in "${REQUIRED_DIRS[@]}"; do
-    if [[ -d "$repo$d" ]]; then
+    dir_path=$(join_path "$repo" "$d")
+    if [[ -d "$dir_path" ]]; then
       present_dirs+=("$d")
     else
       missing_dirs+=("$d")
@@ -166,13 +174,13 @@ while IFS= read -r gitdir; do
   # -----------------------------------------------------------------------------
   # 8) Check required files.
   missing_files=()
-  FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count", or empty if missing.
+  FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"      # File in target repository.
-    mp="$MODEL_REPO/$f"  # Corresponding file in model repository.
-    if [[ -f $rp ]]; then
-      rl=$(wc -l < "$rp" | tr -d ' ')
-      ml=$(wc -l < "$mp" | tr -d ' ')
+    file_path=$(join_path "$repo" "$f")
+    model_file=$(join_path "$MODEL_REPO" "$f")
+    if [[ -f "$file_path" ]]; then
+      rl=$(wc -l < "$file_path" | tr -d ' ')
+      ml=$(wc -l < "$model_file" | tr -d ' ')
       FILE_RESULTS+=("$rl:$ml")
     else
       FILE_RESULTS+=("")
@@ -187,6 +195,7 @@ while IFS= read -r gitdir; do
     echo "# Repo: $repo"
     echo "#   Directories:"
     for d in "${REQUIRED_DIRS[@]}"; do
+      # Use default expansion to avoid unbound variable warnings.
       if [[ " ${present_dirs[*]:-} " == *" $d "* ]]; then
         echo "#     + DIR $d exists"
       else
@@ -213,21 +222,26 @@ while IFS= read -r gitdir; do
   # 10) Emit active fix commands if any required items are missing.
   total_missing=`expr ${#missing_dirs[@]} + ${#missing_files[@]}`
   if [ "$total_missing" -gt 0 ]; then
+    # Join missing arrays into a single string.
+    missing_dirs_joined=$(join_by " " "${missing_dirs[@]}")
+    missing_files_joined=$(join_by " " "${missing_files[@]}")
     {
       echo "echo \">> Updating $repo\""
-      echo "echo \" Missing dirs : ${missing_dirs[*]}\""
-      echo "echo \" Missing files: ${missing_files[*]}\""
+      echo "echo \" Missing dirs: $missing_dirs_joined\""
+      echo "echo \" Missing files: $missing_files_joined\""
       echo
       for d in "${missing_dirs[@]}"; do
-        echo "mkdir -p \"$repo$d\""
-        echo "cp -r \"$MODEL_REPO/$d\" \"$repo$d\""
+        dir_path=$(join_path "$repo" "$d")
+        echo "mkdir -p \"$dir_path\""
+        echo "cp -r \"$(join_path "$MODEL_REPO" "$d")\" \"$dir_path\""
       done
       for f in "${missing_files[@]}"; do
-        dp=`dirname "$f"`
-        if [ "$dp" != "." ]; then
-          echo "mkdir -p \"$repo$dp\""
+        dest=$(join_path "$repo" "$f")
+        dp=`dirname "$dest"`
+        if [ "$dp" != "$repo" ]; then
+          echo "mkdir -p \"$dp\""
         fi
-        echo "cp \"$MODEL_REPO/$f\" \"$repo$f\""
+        echo "cp \"$(join_path "$MODEL_REPO" "$f")\" \"$dest\""
       done
       echo
     } >> "$OUTFILE"
