@@ -271,8 +271,8 @@ while IFS= read -r gitdir; do
       echo
       for d in "${missing_dirs[@]:-}"; do
         dir_path=$(join_path "$repo" "$d")
+        # Only create the directory; do NOT copy its contents.
         echo "mkdir -p \"$(restore_home "$dir_path")\""
-        echo "cp -r \"$(restore_home "$(join_path "$MODEL_REPO" "$d")")\" \"$(restore_home "$dir_path")\""
       done
       for f in "${missing_files[@]:-}"; do
         dest=$(join_path "$repo" "$f")
