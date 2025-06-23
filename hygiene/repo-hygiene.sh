@@ -36,7 +36,7 @@ expand_tilde() {
 
 # -----------------------------------------------------------------------------
 # Function to return the absolute path of a directory.
-# (Bash v3 doesn't have realpath; we use cd and pwd.)
+# (Since Bash v3 lacks realpath, we use cd and pwd.)
 abspath() {
   cd "$1" && pwd
 }
@@ -104,7 +104,7 @@ OUTFILE=$(expand_tilde "$OUTFILE")
 
 # -----------------------------------------------------------------------------
 # 3) Load arrays for required directories and files from JSON.
-# Bash v3 does not support readarray, so use a while-read loop.
+# Bash v3 does not support readarray, so we use while-read loops.
 REQUIRED_DIRS=()
 while IFS= read -r line; do
   REQUIRED_DIRS+=("$line")
@@ -146,7 +146,7 @@ EOF
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
-  # Skip if this repository is inside MODEL_REPO.
+  # Skip if the repository is inside MODEL_REPO.
   if [[ "$(abspath "$repo")" == "$(abspath "$MODEL_REPO")"* ]]; then
     continue
   fi
@@ -165,12 +165,12 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 8) Check required files.
-  # Use parallel indexed arrays since associative arrays are not supported.
+  # Use parallel indexed arrays to store file results.
   missing_files=()
   FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"
-    mp="$MODEL_REPO/$f"
+    rp="$repo$f"      # File path in target repository.
+    mp="$MODEL_REPO/$f"  # Corresponding file in model repository.
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
       ml=$(wc -l < "$mp" | tr -d ' ')
@@ -199,13 +199,9 @@ while IFS= read -r gitdir; do
     for f in "${REQUIRED_FILES[@]}"; do
       result="${FILE_RESULTS[$i]}"
       if [[ -n "$result" ]]; then
-        # Instead of using <<<, we use a here-document for compatibility.
-        old_IFS=$IFS
-        IFS=":"
-        read -r rl ml <<EOF
-$result
-EOF
-        IFS=$old_IFS
+        # Instead of using here-string syntax, use cut to split the result.
+        rl=$(echo "$result" | cut -d: -f1)
+        ml=$(echo "$result" | cut -d: -f2)
         echo "#     + FILE $f exists ($rl vs $ml)"
       else
         echo "#     – FILE $f missing"
