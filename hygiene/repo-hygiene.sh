@@ -4,7 +4,7 @@
 # This script recursively scans a directory tree for Git repositories,
 # compares each repository against a "model" (gold-standard) repository, and
 # generates a self-contained fix script to update any missing files (which are copied)
-# and directories (which are only created) based on the configuration provided in a JSON file.
+# and directories (which are created) based on the configuration provided in a JSON file.
 #
 # All settings come from a JSON configuration file.
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Dependency check: ensure jq is installed.
+# Dependency check
 if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: 'jq' is not installed." >&2
     echo "Please install it:" >&2
@@ -30,13 +30,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # -----------------------------------------------------------------------------
-# Function to expand '~' at the beginning of a path to the user's HOME directory.
+# Function to expand '~' at the beginning of a path to $HOME.
 expand_tilde() {
     [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore the tilde in a path for output.
+# Function to restore tilde in a path (when the path falls within $HOME).
 restore_home() {
     local path="$1"
     if [[ "$path" == "$HOME"* ]]; then
@@ -283,7 +283,6 @@ while IFS= read -r gitdir; do
             if [ ${#missing_dirs[@]} -gt 0 ]; then
                 for d in "${missing_dirs[@]}"; do
                     dir_path=$(join_path "$repo" "$d")
-                    # Create the missing directory only.
                     echo "mkdir -p $(restore_home "$dir_path")"
                 done
             fi
@@ -307,9 +306,6 @@ while IFS= read -r gitdir; do
     # -----------------------------------------------------------------------------
     # 10.5) Emit a divider line to separate repository blocks.
     echo "echo \"=======================================================\"" >> "$OUTFILE"
-
-    # End of repository iteration subshell.
-    } || { echo "Error processing repository $(restore_home "$repo"), skipping." >&2; }
 
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
