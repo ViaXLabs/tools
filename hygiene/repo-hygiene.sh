@@ -3,9 +3,10 @@
 #
 # This script recursively scans a directory tree for Git repositories,
 # compares each repository against a "model" (gold-standard) repository, and
-# generates a self-contained fix script to update any missing files or directories.
+# generates a self-contained fix script to update any missing files (which will be copied)
+# and directories (which are merely created) based on the configuration provided in a JSON file.
 #
-# All settings are provided via a JSON configuration file.
+# All settings come from a JSON configuration file.
 #
 # Dependencies:
 #   - GNU Bash (compatible with Bash 3.2)
@@ -30,12 +31,14 @@ fi
 
 # -----------------------------------------------------------------------------
 # Function to expand '~' at the beginning of a path to the user's HOME directory.
+# If the configuration file gives a path like "~/<something>", it is converted to "$HOME/<something>".
 expand_tilde() {
   [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore the tilde in a path (when the path falls within $HOME).
+# Function to restore the tilde in a path for output.
+# When outputting paths in the generated script, any path that falls within $HOME is displayed with "~".
 restore_home() {
   local path="$1"
   if [[ "$path" == "$HOME"* ]]; then
@@ -89,8 +92,8 @@ The JSON config must include:
 
 Example config.json:
 {
-  "scan_dir": "repos",
-  "model_repo": "model-repo",
+  "scan_dir": "~/repos",
+  "model_repo": "~/model-repo",
   "output_file": "repo-hygiene-fix.sh",
   "required_dirs": [".vscode", ".github", "harness"],
   "required_files": [".gitignore", "pre-commit.yaml", ".vscode/extensions.json"]
@@ -271,7 +274,7 @@ while IFS= read -r gitdir; do
       echo
       for d in "${missing_dirs[@]:-}"; do
         dir_path=$(join_path "$repo" "$d")
-        # Create the directory only (do not copy contents)
+        # For missing directories, only create the directory.
         echo "mkdir -p $(restore_home "$dir_path")"
       done
       for f in "${missing_files[@]:-}"; do
