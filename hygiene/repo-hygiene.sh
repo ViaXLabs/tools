@@ -36,9 +36,9 @@ expand_tilde() {
 
 # -----------------------------------------------------------------------------
 # Function to return the absolute path of a directory.
-# (Bash v3 does not have realpath; this function uses cd and pwd.)
+# (We remove extra parentheses here to avoid syntax issues in Bash v3.)
 abspath() {
-  (cd "$1" && pwd)
+  cd "$1" && pwd
 }
 
 # -----------------------------------------------------------------------------
@@ -91,7 +91,7 @@ done
 # 2) Validate inputs and set defaults.
 [[ -n $CONFIG ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
 [[ -f $CONFIG ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
-# If OUTFILE wasn't provided from the CLI, load it from the JSON config.
+# If OUTFILE was not provided on the command-line, load it from the JSON config.
 if [[ -z $OUTFILE ]]; then
   OUTFILE=$(jq -r '.output_file // "fix-script.sh"' "$CONFIG")
 fi
@@ -103,7 +103,7 @@ MODEL_REPO=$(expand_tilde "$(jq -r '.model_repo // empty' "$CONFIG")")
 OUTFILE=$(expand_tilde "$OUTFILE")
 
 # -----------------------------------------------------------------------------
-# 3) Load arrays for required directories and files.
+# 3) Load arrays for required directories and files from JSON.
 # Bash v3 does not support readarray, so we use while-read loops.
 REQUIRED_DIRS=()
 while IFS= read -r line; do
@@ -123,7 +123,7 @@ done
 [[ -d $MODEL_REPO/.git ]] || { echo "ERROR: model_repo '$MODEL_REPO' is not a Git repo." >&2; exit 5; }
 
 # -----------------------------------------------------------------------------
-# 4) Backup existing output file if it exists.
+# 4) Backup existing output file if it already exists.
 if [[ -f $OUTFILE ]]; then
   ts=$(date +%Y%m%d_%H%M%S)
   backup="${OUTFILE}.${ts}.bak"
@@ -133,19 +133,18 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5) Write the header for the new fix script.
-# Using date with a format compatible with most systems.
+# Use a portable date format (without %z for maximum compatibility).
 cat > "$OUTFILE" <<EOF
 #!/usr/bin/env bash
 # Auto-generated fix script — DO NOT EDIT
 # scan_dir    : $SCAN_DIR
 # model_repo  : $MODEL_REPO
-# Generated on: $(date +"%Y-%m-%dT%H:%M:%S%z")
-
+# Generated on: $(date +"%Y-%m-%dT%H:%M:%S")
 EOF
 
 # -----------------------------------------------------------------------------
 # 6) Recursively scan SCAN_DIR for Git repositories.
-# We use find to locate all ".git" directories.
+# Use find to locate all ".git" directories.
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
@@ -168,11 +167,11 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 8) Check required files.
-  # Since associative arrays are unsupported in Bash v3, use parallel index arrays.
+  # Use parallel index arrays since associative arrays are not supported.
   missing_files=()
-  FILE_RESULTS=()  # Each element will be in the format "repo_lines:model_lines" or empty if missing.
+  FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"    # Path in the target repository.
+    rp="$repo$f"      # Target repository file.
     mp="$MODEL_REPO/$f"  # Corresponding file in the model repository.
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
