@@ -169,7 +169,7 @@ while IFS= read -r gitdir; do
   missing_files=()
   FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"    # File path in target repository.
+    rp="$repo$f"      # File path in target repository.
     mp="$MODEL_REPO/$f"  # Corresponding file in model repository.
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
@@ -212,8 +212,8 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 10) Emit active fix commands if any required items are missing.
-  total_missing=$((${#missing_dirs[@]} + ${#missing_files[@]}))
-  if [ $total_missing -gt 0 ]; then
+  total_missing=$(expr ${#missing_dirs[@]} + ${#missing_files[@]})
+  if [ "$total_missing" -gt 0 ]; then
     {
       echo "echo \">> Updating $repo\""
       echo "echo \" Missing dirs : ${missing_dirs[*]}\""
@@ -224,9 +224,9 @@ while IFS= read -r gitdir; do
         echo "cp -r \"$MODEL_REPO/$d\" \"$repo$d\""
       done
       for f in "${missing_files[@]}"; do
-        dp=\$(dirname "$f")
-        if [ "\$dp" != "." ]; then
-          echo "mkdir -p \"$repo\$dp\""
+        dp=`dirname "$f"`
+        if [ "$dp" != "." ]; then
+          echo "mkdir -p \"$repo$dp\""
         fi
         echo "cp \"$MODEL_REPO/$f\" \"$repo$f\""
       done
