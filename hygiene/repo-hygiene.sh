@@ -36,7 +36,7 @@ expand_tilde() {
 
 # -----------------------------------------------------------------------------
 # Function to return the absolute path of a directory.
-# (We remove extra parentheses here to avoid syntax issues in Bash v3.)
+# (Bash v3 doesn't have realpath; we use cd and pwd.)
 abspath() {
   cd "$1" && pwd
 }
@@ -91,7 +91,7 @@ done
 # 2) Validate inputs and set defaults.
 [[ -n $CONFIG ]] || { echo "ERROR: -c <config.json> is required." >&2; exit 1; }
 [[ -f $CONFIG ]] || { echo "ERROR: Config file '$CONFIG' not found." >&2; exit 2; }
-# If OUTFILE was not provided on the command-line, load it from the JSON config.
+# If OUTFILE wasn't provided on the command-line, load it from the JSON config.
 if [[ -z $OUTFILE ]]; then
   OUTFILE=$(jq -r '.output_file // "fix-script.sh"' "$CONFIG")
 fi
@@ -104,7 +104,7 @@ OUTFILE=$(expand_tilde "$OUTFILE")
 
 # -----------------------------------------------------------------------------
 # 3) Load arrays for required directories and files from JSON.
-# Bash v3 does not support readarray, so we use while-read loops.
+# Bash v3 does not support readarray, so use a while-read loop.
 REQUIRED_DIRS=()
 while IFS= read -r line; do
   REQUIRED_DIRS+=("$line")
@@ -133,7 +133,6 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5) Write the header for the new fix script.
-# Use a portable date format (without %z for maximum compatibility).
 cat > "$OUTFILE" <<EOF
 #!/usr/bin/env bash
 # Auto-generated fix script — DO NOT EDIT
@@ -144,11 +143,10 @@ EOF
 
 # -----------------------------------------------------------------------------
 # 6) Recursively scan SCAN_DIR for Git repositories.
-# Use find to locate all ".git" directories.
 while IFS= read -r gitdir; do
   repo=$(dirname "$gitdir")
 
-  # Skip if the repository is inside MODEL_REPO.
+  # Skip if this repository is inside MODEL_REPO.
   if [[ "$(abspath "$repo")" == "$(abspath "$MODEL_REPO")"* ]]; then
     continue
   fi
@@ -167,12 +165,12 @@ while IFS= read -r gitdir; do
 
   # -----------------------------------------------------------------------------
   # 8) Check required files.
-  # Use parallel index arrays since associative arrays are not supported.
+  # Use parallel indexed arrays since associative arrays are not supported.
   missing_files=()
   FILE_RESULTS=()  # Each element: "repo_line_count:model_line_count" or empty if missing.
   for f in "${REQUIRED_FILES[@]}"; do
-    rp="$repo$f"      # Target repository file.
-    mp="$MODEL_REPO/$f"  # Corresponding file in the model repository.
+    rp="$repo$f"
+    mp="$MODEL_REPO/$f"
     if [[ -f $rp ]]; then
       rl=$(wc -l < "$rp" | tr -d ' ')
       ml=$(wc -l < "$mp" | tr -d ' ')
@@ -201,7 +199,13 @@ while IFS= read -r gitdir; do
     for f in "${REQUIRED_FILES[@]}"; do
       result="${FILE_RESULTS[$i]}"
       if [[ -n "$result" ]]; then
-        IFS=':' read -r rl ml <<< "$result"
+        # Instead of using <<<, we use a here-document for compatibility.
+        old_IFS=$IFS
+        IFS=":"
+        read -r rl ml <<EOF
+$result
+EOF
+        IFS=$old_IFS
         echo "#     + FILE $f exists ($rl vs $ml)"
       else
         echo "#     – FILE $f missing"
@@ -219,12 +223,10 @@ while IFS= read -r gitdir; do
       echo "echo \" Missing dirs : ${missing_dirs[*]}\""
       echo "echo \" Missing files: ${missing_files[*]}\""
       echo
-      # For each missing directory: create it and copy it from the model repository.
       for d in "${missing_dirs[@]}"; do
         echo "mkdir -p \"$repo$d\""
         echo "cp -r \"$MODEL_REPO/$d\" \"$repo$d\""
       done
-      # For each missing file: ensure its parent directory exists and copy the file.
       for f in "${missing_files[@]}"; do
         dp=\$(dirname "$f")
         [[ \$dp != "." ]] && echo "mkdir -p \"$repo\$dp\""
