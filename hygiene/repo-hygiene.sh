@@ -4,7 +4,9 @@
 # This script recursively scans a directory tree for Git repositories,
 # compares each repository against a "model" (gold-standard) repository, and
 # generates a self-contained fix script to update any missing files (which are copied)
-# and directories (which are created) based on the configuration in a JSON file.
+# and directories (which are only created) based on the configuration provided in a JSON file.
+#
+# All settings come from a JSON configuration file.
 #
 # Dependencies:
 #   - GNU Bash (compatible with Bash 3.2)
@@ -28,13 +30,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # -----------------------------------------------------------------------------
-# Function to expand '~' at the beginning of a path to $HOME.
+# Function to expand '~' at the beginning of a path to the user's HOME directory.
 expand_tilde() {
     [[ "$1" == ~* ]] && echo "${1/#\~/$HOME}" || echo "$1"
 }
 
 # -----------------------------------------------------------------------------
-# Function to restore tilde in a path for output.
+# Function to restore the tilde in a path for output.
 restore_home() {
     local path="$1"
     if [[ "$path" == "$HOME"* ]]; then
@@ -168,132 +170,147 @@ EOF
 
 # -----------------------------------------------------------------------------
 # 6) Recursively scan SCAN_DIR for Git repositories.
-# Wrap each repository iteration in a subshell with error handling so that if one repository causes an error the loop continues.
 while IFS= read -r gitdir; do
-    {
-        repo=$(dirname "$gitdir")
+    repo=$(dirname "$gitdir")
 
-        # Skip if this repository's absolute path begins with the model_repo's absolute path.
-        if echo "`abspath "$repo"`" | grep -q "^`abspath "$MODEL_REPO"`"; then
-            continue
+    # Skip if this repository's absolute path begins with the model_repo's absolute path.
+    if echo "`abspath "$repo"`" | grep -q "^`abspath "$MODEL_REPO"`"; then
+        continue
+    fi
+
+    # Explicitly initialize arrays for this repository iteration.
+    present_dirs=()
+    missing_dirs=()
+    missing_files=()
+    FILE_RESULTS=()
+
+    # -----------------------------------------------------------------------------
+    # 7) Check required directories.
+    for d in "${REQUIRED_DIRS[@]}"; do
+        dir_path=$(join_path "$repo" "$d")
+        if [[ -d "$dir_path" ]]; then
+            present_dirs+=("$d")
+        else
+            missing_dirs+=("$d")
         fi
+    done
 
-        # Explicitly initialize arrays for each repository iteration.
-        present_dirs=()
-        missing_dirs=()
-        missing_files=()
-        FILE_RESULTS=()
+    # -----------------------------------------------------------------------------
+    # 8) Check required files.
+    for f in "${REQUIRED_FILES[@]}"; do
+        file_path=$(join_path "$repo" "$f")
+        model_file=$(join_path "$MODEL_REPO" "$f")
+        if [[ -f "$file_path" ]]; then
+            rl=$(wc -l < "$file_path" | tr -d ' ')
+            ml=$(wc -l < "$model_file" | tr -d ' ')
+            if [ "$rl" -eq "$ml" ]; then
+                rs=$(wc -c < "$file_path" | tr -d ' ')
+                ms=$(wc -c < "$model_file" | tr -d ' ')
+                FILE_RESULTS+=("$rl:$ml:$rs:$ms")
+            else
+                FILE_RESULTS+=("$rl:$ml")
+            fi
+        else
+            FILE_RESULTS+=("")
+            missing_files+=("$f")
+        fi
+    done
 
-        # -----------------------------------------------------------------------------
-        # 7) Check required directories.
+    # -----------------------------------------------------------------------------
+    # 9) Emit a commented status block for this repository.
+    {
+        echo "# ───────────────────────────────────────"
+        echo "# Repo: $(restore_home "$repo")"
+        echo "#   Directories:"
         for d in "${REQUIRED_DIRS[@]}"; do
-            dir_path=$(join_path "$repo" "$d")
-            if [[ -d "$dir_path" ]]; then
-                present_dirs+=("$d")
+            found=0
+            for pd in "${present_dirs[@]}"; do
+                if [ "$pd" = "$d" ]; then
+                    found=1
+                    break
+                fi
+            done
+            if [ $found -eq 1 ]; then
+                echo "#     + DIR $d exists"
             else
-                missing_dirs+=("$d")
+                echo "#     – DIR $d missing"
             fi
         done
-
-        # -----------------------------------------------------------------------------
-        # 8) Check required files.
+        echo "#   Files:"
+        i=0
         for f in "${REQUIRED_FILES[@]}"; do
-            file_path=$(join_path "$repo" "$f")
-            model_file=$(join_path "$MODEL_REPO" "$f")
-            if [[ -f "$file_path" ]]; then
-                rl=$(wc -l < "$file_path" | tr -d ' ')
-                ml=$(wc -l < "$model_file" | tr -d ' ')
-                # If line counts are equal, also get file sizes.
-                if [ "$rl" -eq "$ml" ]; then
-                    rs=$(wc -c < "$file_path" | tr -d ' ')
-                    ms=$(wc -c < "$model_file" | tr -d ' ')
-                    FILE_RESULTS+=("$rl:$ml:$rs:$ms")
+            result="${FILE_RESULTS[$i]}"
+            if [[ -n "$result" ]]; then
+                field_count=$(echo "$result" | awk -F: '{print NF}')
+                if [ "$field_count" -eq 4 ]; then
+                    rl=$(echo "$result" | cut -d: -f1)
+                    ml=$(echo "$result" | cut -d: -f2)
+                    rs=$(echo "$result" | cut -d: -f3)
+                    ms=$(echo "$result" | cut -d: -f4)
+                    echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl; model size: $ms bytes vs scanned file: $rs bytes)"
                 else
-                    FILE_RESULTS+=("$rl:$ml")
+                    rl=$(echo "$result" | cut -d: -f1)
+                    ml=$(echo "$result" | cut -d: -f2)
+                    echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl)"
                 fi
             else
-                FILE_RESULTS+=("")
-                missing_files+=("$f")
+                echo "#     – FILE $f missing"
             fi
+            i=$((i+1))
         done
+        echo "#"
+    } >> "$OUTFILE"
 
-        # -----------------------------------------------------------------------------
-        # 9) Emit a commented status block for this repository.
+    # -----------------------------------------------------------------------------
+    # 10) Emit active fix commands if any required items are missing.
+    total_missing=$(expr ${#missing_dirs[@]:-} + ${#missing_files[@]:-})
+    if [ "$total_missing" -gt 0 ]; then
         {
-            echo "# ───────────────────────────────────────"
-            echo "# Repo: $(restore_home "$repo")"
-            echo "#   Directories:"
-            for d in "${REQUIRED_DIRS[@]}"; do
-                if [[ " ${present_dirs[*]:-} " == *" $d "* ]]; then
-                    echo "#     + DIR $d exists"
-                else
-                    echo "#     – DIR $d missing"
-                fi
-            done
-            echo "#   Files:"
-            i=0
-            for f in "${REQUIRED_FILES[@]}"; do
-                result="${FILE_RESULTS[$i]}"
-                if [[ -n "$result" ]]; then
-                    field_count=$(echo "$result" | awk -F: '{print NF}')
-                    if [ "$field_count" -eq 4 ]; then
-                        rl=$(echo "$result" | cut -d: -f1)
-                        ml=$(echo "$result" | cut -d: -f2)
-                        rs=$(echo "$result" | cut -d: -f3)
-                        ms=$(echo "$result" | cut -d: -f4)
-                        echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl; model size: $ms bytes vs scanned file: $rs bytes)"
-                    else
-                        rl=$(echo "$result" | cut -d: -f1)
-                        ml=$(echo "$result" | cut -d: -f2)
-                        echo "#     + FILE $f exists (model lines: $ml vs scanned file: $rl)"
-                    fi
-                else
-                    echo "#     – FILE $f missing"
-                fi
-                i=$((i+1))
-            done
-            echo "#"
-        } >> "$OUTFILE"
-
-        # -----------------------------------------------------------------------------
-        # 10) Emit active fix commands if any required items are missing.
-        total_missing=$(expr ${#missing_dirs[@]:-} + ${#missing_files[@]:-})
-        if [ "$total_missing" -gt 0 ]; then
-            {
-                echo "echo \">> Updating $(restore_home "$repo")\""
+            echo "echo \">> Updating $(restore_home "$repo")\""
+            if [ ${#missing_dirs[@]} -gt 0 ]; then
                 echo "echo \"Missing dirs:\""
-                for d in "${missing_dirs[@]:-}"; do
+                for d in "${missing_dirs[@]}"; do
                     echo "echo \"  $d\""
                 done
+            fi
+            if [ ${#missing_files[@]} -gt 0 ]; then
                 echo "echo \"Missing files:\""
-                for f in "${missing_files[@]:-}"; do
+                for f in "${missing_files[@]}"; do
                     echo "echo \"  $f\""
                 done
-                echo
-                for d in "${missing_dirs[@]:-}"; do
+            fi
+            echo
+            if [ ${#missing_dirs[@]} -gt 0 ]; then
+                for d in "${missing_dirs[@]}"; do
                     dir_path=$(join_path "$repo" "$d")
-                    # For missing directories, only create the directory
+                    # Create the missing directory only.
                     echo "mkdir -p $(restore_home "$dir_path")"
                 done
-                for f in "${missing_files[@]:-}"; do
+            fi
+            if [ ${#missing_files[@]} -gt 0 ]; then
+                for f in "${missing_files[@]}"; do
                     dest=$(join_path "$repo" "$f")
-                    dp=`dirname "$dest"`
+                    dp=$(dirname "$dest")
                     if [ "$dp" != "$repo" ]; then
                         echo "mkdir -p $(restore_home "$dp")"
                     fi
                     echo "cp $(restore_home "$(join_path "$MODEL_REPO" "$f")") $(restore_home "$dest")"
                 done
-                echo
-            } >> "$OUTFILE"
-        else
-            echo "# Repo: $(restore_home "$repo") is fully compliant — no fixes needed." >> "$OUTFILE"
-            echo >> "$OUTFILE"
-        fi
+            fi
+            echo
+        } >> "$OUTFILE"
+    else
+        echo "# Repo: $(restore_home "$repo") is fully compliant — no fixes needed." >> "$OUTFILE"
+        echo >> "$OUTFILE"
+    fi
 
-        # -----------------------------------------------------------------------------
-        # 10.5) Emit a divider line to separate repository blocks.
-        echo "echo \"=======================================================\"" >> "$OUTFILE"
+    # -----------------------------------------------------------------------------
+    # 10.5) Emit a divider line to separate repository blocks.
+    echo "echo \"=======================================================\"" >> "$OUTFILE"
+
+    # End of repository iteration subshell.
     } || { echo "Error processing repository $(restore_home "$repo"), skipping." >&2; }
+
 done < <(find "$SCAN_DIR" -type d -name ".git")
 
 # -----------------------------------------------------------------------------
