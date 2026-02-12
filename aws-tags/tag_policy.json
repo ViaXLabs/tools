@@ -1,0 +1,57 @@
+{
+  "protected_keys": ["TOC"],
+
+  "required": {
+    "system": {
+      "mode": "must_equal_one_of",
+      "allowed": [
+        "Verifications/SAVE",
+        "Verifications/SVS",
+        "Verifications/VisPET",
+        "Verifications/VDIS"
+      ]
+    },
+
+    "environment": { "mode": "must_exist" },
+
+    "poc": { "mode": "must_exist" },
+    "team": { "mode": "must_exist" },
+    "application": { "mode": "must_exist" },
+    "related_application": { "mode": "must_exist" },
+    "conditionTag": { "mode": "must_exist" },
+
+    "criticality": {
+      "mode": "must_equal_one_of",
+      "allowed": ["low", "medium", "high"]
+    },
+
+    "business_impact": {
+      "mode": "must_equal_one_of",
+      "allowed": ["low", "medium", "high"]
+    }
+  },
+
+  "defaults": {
+    "criticality": "low",
+    "business_impact": "low"
+  },
+
+  "derived": {
+    "team": {
+      "rules": [
+        {
+          "source": "any_tag_text",
+          "match": "contains_any",
+          "needles": ["save"],
+          "value": "save"
+        },
+        {
+          "source": "entity_name",
+          "match": "contains_any",
+          "needles": ["pet", "pe"],
+          "value": "pet"
+        }
+      ]
+    }
+  }
+}

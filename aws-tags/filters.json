@@ -1,0 +1,47 @@
+{
+  /*
+    filters.json (OPTIONAL)
+
+    If you do NOT pass --filters filters.json, the tool processes EVERYTHING.
+
+    If you DO pass --filters filters.json:
+      - include rules narrow down what you process
+      - exclude rules remove things even if they matched includes
+
+    Tip:
+      Start empty (no filters), then add just one filter at a time.
+
+    NOTE: JSON doesn't officially support comments.
+    If your editor complains, remove these comment blocks (/* ... */).
+  */
+
+  "include": {
+    /*
+      Any include list left empty means "no restriction" for that dimension.
+
+      If you set include.name_contains = ["svc-","api-"]
+      then ONLY entities with names containing svc- OR api- will be included.
+
+      All include dimensions combine as AND:
+        If you set include.domain AND include.entityType, the entity must match both.
+    */
+    "guids": [],
+    "name_contains": [],
+    "domains": [],
+    "entityTypes": []
+  },
+
+  "exclude": {
+    /*
+      Any exclude match removes an entity.
+      Excludes always win.
+
+      Example:
+        exclude.name_contains: ["test","sandbox"]
+    */
+    "guids": [],
+    "name_contains": [],
+    "domains": [],
+    "entityTypes": []
+  }
+}
