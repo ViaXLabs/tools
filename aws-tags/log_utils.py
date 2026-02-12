@@ -4,15 +4,15 @@ from typing import Optional
 
 def setup_logging(log_file: Optional[str] = None, verbose: bool = False) -> logging.Logger:
     """
-    Logging helper:
-      - always logs to console
-      - optional --log-file writes detailed logs to a file
-      - --verbose shows more detail on console
+    Simple logging:
+      - console always
+      - optional file via --log-file
+      - --verbose increases console detail
     """
     logger = logging.getLogger("nr_tag_tool")
     logger.setLevel(logging.DEBUG)
 
-    # Avoid duplicate handlers in repeated runs/imports
+    # Prevent duplicate handlers if re-imported
     if logger.handlers:
         return logger
 

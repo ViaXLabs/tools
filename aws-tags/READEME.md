@@ -1,224 +1,167 @@
-# New Relic Tag Tool (Export → Check (CSV) → Review/Edit → Apply)
+# New Relic Tag Tool (Export → Check CSV → Review/Edit → Apply)
 
-- [New Relic Tag Tool (Export → Check (CSV) → Review/Edit → Apply)](#new-relic-tag-tool-export--check-csv--reviewedit--apply)
-  - [Setup](#setup)
-  - [Quick “what changed vs your last version”](#quick-what-changed-vs-your-last-version)
+Goals:
 
-## Setup
+- Default: look at EVERYTHING in the account.
+- Sometimes: include/exclude via `filters.json`.
+- Always: generate CSV first, review/edit, then apply.
+- Default behavior: **ADD missing required tags**, avoid messing with existing tags.
+- Apply supports `--dry-run` and always writes an apply log CSV.
+
+---
+
+## Install (no venv required)
+
+Install requests once:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install --user requests
+Set your NR API key:
 
 export NR_API_KEY="NRAK-..."
-The main files you will edit (easy maintenance)
-1) tag_policy.json
-Where you define:
+Optional (recommended): set account id so you don't have to type it:
 
-required tags (required)
+export NR_ACCOUNT_ID="1234567"
+Main files you edit
+tag_policy.json
+Required tags live under required
 
-safe defaults for missing tags (defaults)
+Defaults for missing tags live under defaults
 
-derived mapping rules (derived) (ex: team mapping)
+Team mapping rules live under derived.team.rules
 
-To add a new required tag:
+Add a new team mapping rule by copying a rule and changing:
 
-add it under required
+needles (what to look for)
 
-optionally add a default under defaults
+value (what team tag should become)
 
-optionally add a derived rule under derived
+Rules are checked top-to-bottom. First match wins.
 
-2) filters.json (optional)
-Only used if you pass --filters filters.json.
-
-This lets you INCLUDE or EXCLUDE entities by:
+filters.json (optional)
+Only used when passed via --filters filters.json.
+Lets you include/exclude by:
 
 GUID
 
-name contains (case-insensitive)
+name contains
 
 domain
 
 entityType
 
-Default behavior if you do not pass --filters:
+Step-by-step workflow
+Step 1) Export (default = everything)
+If you set NR_ACCOUNT_ID, you can just do:
 
-tools process everything.
+python3 export_newrelic_entity_tags.py --out entities_tags.json
+Or specify it explicitly:
 
-Step-by-step process (recommended)
-Step 1) Export entities + tags (default = everything)
-python export_newrelic_entity_tags.py --account-id 1234567 --out entities_tags.json
-Optional: export only a subset using filters
+python3 export_newrelic_entity_tags.py --account-id 1234567 --out entities_tags.json
+Optional filtering at export time:
 
-python export_newrelic_entity_tags.py \
-  --account-id 1234567 \
-  --out entities_tags.json \
-  --filters filters.json
-Step 2) Check tags (dry-run proposals) and generate CSV
-This is the file you review first.
-
-python check_newrelic_tags.py \
+python3 export_newrelic_entity_tags.py --out entities_tags.json --filters filters.json
+Step 2) Check (dry-run proposals) → outputs CSVs
+python3 check_newrelic_tags.py \
   --in entities_tags.json \
   --policy tag_policy.json \
   --out-json tag_report.json \
   --out-csv tag_report.csv \
   --only-action-needed
-Optional: review only a subset (without changing the export)
+This produces:
 
-python check_newrelic_tags.py \
-  --in entities_tags.json \
-  --policy tag_policy.json \
-  --filters filters.json \
-  --out-json tag_report.json \
-  --out-csv tag_report.csv \
-  --only-action-needed
-What you will see in tag_report.csv:
+tag_report.csv
 
-missing_keys = required tags missing
+includes:
 
-present_required_values = required tags already present + their values
+all_current_tags (JSON)
 
-proposed_add = what will be ADDED (this is usually what you want)
+would_be_tags (JSON) = current + proposed changes
 
-invalid_keys = required tags present but invalid (tool flags these but does not change them by default)
+tag_report_wide_required.csv
 
-IMPORTANT DEFAULT:
+WIDE view: ONLY required tag keys are columns (WOULD-BE final values)
 
-the checker proposes ADD for missing tags
+tag_report_wide_all.csv
 
-the checker flags invalid tags but does NOT propose replacements
+WIDE view: ALL tag keys are columns (WOULD-BE final values)
 
-If you really want it to propose replacements (opt-in):
+Friendly order: required columns first, then everything else
 
-python check_newrelic_tags.py \
+Open quickly on macOS:
+
+open tag_report.csv
+open tag_report_wide_required.csv
+open tag_report_wide_all.csv
+Default behavior:
+
+Proposes ADD actions for missing required tags
+
+Flags invalid required tags but does NOT replace them unless you opt-in
+
+Opt-in replacement proposals (advanced):
+
+python3 check_newrelic_tags.py \
   --in entities_tags.json \
   --policy tag_policy.json \
   --out-json tag_report.json \
   --out-csv tag_report.csv \
   --only-action-needed \
   --propose-replacements
-Step 3) Review and optionally edit before applying
-You have 3 safe ways to proceed:
+Step 3) Review / edit before applying
+Safe options:
 
-Option A (most common): edit tag_policy.json and re-run Step 2
-Example:
+Edit tag_policy.json and rerun Step 2
 
-adjust derived team mapping rules
+Edit filters.json and rerun Step 2
 
-add more required tags
+Manually edit tag_report.json (remove entries or delete keys from proposed.add)
 
-add defaults
-
-Then rerun Step 2 to regenerate the CSV and report.
-
-Option B: edit filters.json and re-run Step 2
-Example:
-
-exclude noisy entities
-
-focus on one set of systems
-
-Option C: manually edit the report JSON tag_report.json
-This is allowed and sometimes useful.
-
-Typical manual edits:
-
-Remove an entity entry you do NOT want to apply
-
-Remove a specific proposed key from proposed.add
-
-Change a proposed value
-
-Look for each entry like:
-
-"proposed": {
-  "add": { "team": ["save"] },
-  "replace": {}
-}
-Step 4) Apply DRY-RUN (prints + writes CSV log)
-This will NOT change anything in New Relic, but you get a clear log.
-
-python apply_newrelic_tag_changes.py \
+Step 4) Apply DRY-RUN (no changes, outputs apply_log.csv)
+python3 apply_newrelic_tag_changes.py \
   --report tag_report.json \
   --policy tag_policy.json \
   --out-csv apply_log.csv \
   --dry-run
-Optional: apply only a subset using filters (even at apply time)
+Open:
 
-python apply_newrelic_tag_changes.py \
-  --report tag_report.json \
-  --policy tag_policy.json \
-  --filters filters.json \
-  --out-csv apply_log.csv \
-  --dry-run
-Review:
-
-apply_log.csv shows every action as DRY_RUN
-
+open apply_log.csv
 Step 5) Apply for real (default = ADD only)
-python apply_newrelic_tag_changes.py \
+python3 apply_newrelic_tag_changes.py \
   --report tag_report.json \
   --policy tag_policy.json \
   --out-csv apply_log.csv
-By default this applies ADD actions only.
+If you really want to allow REPLACE actions (be careful):
 
-If you explicitly want REPLACE actions (advanced, careful):
-
-python apply_newrelic_tag_changes.py \
+python3 apply_newrelic_tag_changes.py \
   --report tag_report.json \
   --policy tag_policy.json \
   --out-csv apply_log.csv \
   --allow-replace
-Updating team mapping (easy and obvious)
-Team mapping is controlled in tag_policy.json here:
+Quality-of-life scripts (recommended)
+Make executable once:
 
-"derived": {
-  "team": {
-    "rules": [
-      {
-        "source": "any_tag_text",
-        "match": "contains_any",
-        "needles": ["save"],
-        "value": "save"
-      }
-    ]
-  }
-}
-To add another mapping:
+chmod +x make_reports.sh make_apply.sh
+Export + Check in one command
+If you set NR_ACCOUNT_ID:
 
-add another object to the rules array
+./make_reports.sh
+Or pass account id:
 
-rules are checked top-to-bottom
+./make_reports.sh 1234567
+Optional filters:
 
-first match wins
+./make_reports.sh 1234567 filters.json
+Apply dry-run / real
+./make_apply.sh dry
+./make_apply.sh real
+Safety notes
+protected_keys (like TOC) are never modified.
 
-Example new rule template:
+Default apply is ADD-only.
 
-{
-  "source": "entity_name",
-  "match": "contains_any",
-  "needles": ["svs", "svs-"],
-  "value": "svs"
-}
-Notes / Safety
-Protected keys (like TOC) are never modified.
-
-Default behavior avoids replacing tags.
-
-You always review tag_report.csv before you apply anything.
-
-You always have --dry-run for apply and an apply_log.csv output.
+You always review CSVs before applying.
 
 
 ---
-
-## Quick “what changed vs your last version”
-- Added **filters.json + filter_utils.py** so you can include/exclude easily without touching Python.
-- Checker always produces **CSV** to review.
-- Applier always produces **CSV log** of what would/did happen.
-- Default behavior is “**ADD missing required tags only**”.
-
-If you want one more quality-of-life improvement: I can add a `make_reports.sh` and `make_apply.sh` (simple shell scripts) so you don’t have to remember command flags — but the current README should already be straightforward.
 ```

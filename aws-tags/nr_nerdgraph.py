@@ -8,12 +8,10 @@ NERDGRAPH_ENDPOINT = "https://api.newrelic.com/graphql"
 
 
 class NerdGraphError(RuntimeError):
-    """Raised when NerdGraph returns errors or request fails."""
     pass
 
 
 def _mask_key(key: str) -> str:
-    """Mask API key in any exception message/log output."""
     if not key:
         return ""
     if len(key) <= 6:
@@ -23,12 +21,7 @@ def _mask_key(key: str) -> str:
 
 class NerdGraphClient:
     """
-    Simple NerdGraph client.
-
-    Uses env var:
-      NR_API_KEY
-
-    If NR changes auth or endpoint, this is the file to edit.
+    NerdGraph client using env var NR_API_KEY.
     """
 
     def __init__(
@@ -49,9 +42,6 @@ class NerdGraphClient:
         self.backoff_base_s = backoff_base_s
 
     def graphql(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Execute GraphQL request with retry/backoff on transient failures.
-        """
         headers = {"Content-Type": "application/json", "API-Key": self.api_key}
         payload = {"query": query, "variables": variables or {}}
 

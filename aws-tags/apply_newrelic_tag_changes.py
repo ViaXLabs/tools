@@ -54,8 +54,8 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Apply proposed changes from tag_report.json.\n"
-            "Default behavior: apply ADDs only.\n"
-            "Always writes a CSV apply log showing DRY_RUN or OK/ERROR."
+            "Default: apply ADDs only.\n"
+            "Always writes CSV apply_log showing DRY_RUN or OK/ERROR."
         )
     )
     parser.add_argument("--report", required=True, help="tag_report.json from checker")
@@ -63,11 +63,7 @@ def main():
     parser.add_argument("--filters", type=str, default=None, help="Optional filters.json path (apply only subset)")
 
     parser.add_argument("--dry-run", action="store_true", help="No NerdGraph calls; just log actions")
-    parser.add_argument(
-        "--allow-replace",
-        action="store_true",
-        help="Opt-in: allow applying REPLACE actions that exist in report.",
-    )
+    parser.add_argument("--allow-replace", action="store_true", help="Opt-in: allow applying REPLACE actions")
 
     parser.add_argument("--only-guids", default=None, help="Comma-separated GUIDs to apply (optional)")
     parser.add_argument("--max", type=int, default=None, help="Max entities to process (optional)")
@@ -95,7 +91,6 @@ def main():
         guid_filter = set([g.strip() for g in args.only_guids.split(",") if g.strip()])
 
     flt = load_filters(args.filters)
-
     client = NerdGraphClient() if not args.dry_run else None
 
     apply_rows: List[Dict[str, Any]] = []
@@ -108,20 +103,16 @@ def main():
         guid = entry.get("guid")
         name = entry.get("name")
 
-        # optional filters
         if guid_filter is not None and guid not in guid_filter:
             continue
         if flt is not None and not entity_matches_filters(entry, flt):
-            # report entry contains name/domain/entityType/guid; enough to filter
             continue
 
         add_map, rep_map = extract_proposed(entry)
 
-        # enforce protected keys
         add_map = {k: v for k, v in add_map.items() if k not in protected}
         rep_map = {k: v for k, v in rep_map.items() if k not in protected}
 
-        # default: ADD only
         if not args.allow_replace:
             rep_map = {}
 
@@ -134,7 +125,6 @@ def main():
         if rep_map:
             logger.info(f"  REPLACE: {rep_map}")
 
-        # Apply ADDs
         for k, vals in add_map.items():
             if args.dry_run:
                 apply_rows.append(
@@ -181,7 +171,6 @@ def main():
                     }
                 )
 
-        # Apply REPLACEs (only if allowed)
         for k, vals in rep_map.items():
             if args.dry_run:
                 apply_rows.append(

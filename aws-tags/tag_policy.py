@@ -4,12 +4,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 def load_policy(path: str) -> Dict[str, Any]:
-    """
-    Loads tag policy JSON.
-
-    Maintainability tip:
-      Most of what you change will be in tag_policy.json, not in this file.
-    """
     import json
 
     with open(path, "r", encoding="utf-8") as f:
@@ -25,22 +19,10 @@ def load_policy(path: str) -> Dict[str, Any]:
 
 def normalize_tags(raw_tags: Any) -> Dict[str, List[str]]:
     """
-    Convert NerdGraph tags to a consistent dict[str, list[str]] format.
+    Normalize tags into: dict[str, list[str]]
     """
     if raw_tags is None:
         return {}
-
-    if isinstance(raw_tags, dict):
-        out: Dict[str, List[str]] = {}
-        for k, v in raw_tags.items():
-            if v is None:
-                out[str(k)] = []
-            elif isinstance(v, list):
-                out[str(k)] = [str(x).strip() for x in v if str(x).strip()]
-            else:
-                s = str(v).strip()
-                out[str(k)] = [s] if s else []
-        return out
 
     if isinstance(raw_tags, list):
         out: Dict[str, List[str]] = {}
@@ -53,7 +35,17 @@ def normalize_tags(raw_tags: Any) -> Dict[str, List[str]]:
                 continue
             if not isinstance(vals, list):
                 vals = [vals]
-            out[str(k)] = [str(x).strip() for x in vals if str(x).strip()]
+            out[str(k)] = [str(v).strip() for v in vals if str(v).strip()]
+        return out
+
+    if isinstance(raw_tags, dict):
+        out: Dict[str, List[str]] = {}
+        for k, v in raw_tags.items():
+            if isinstance(v, list):
+                out[str(k)] = [str(x).strip() for x in v if str(x).strip()]
+            else:
+                s = str(v).strip()
+                out[str(k)] = [s] if s else []
         return out
 
     return {}
@@ -61,12 +53,10 @@ def normalize_tags(raw_tags: Any) -> Dict[str, List[str]]:
 
 def _parse_required_entry(req_entry: Any) -> Tuple[str, Optional[List[str]]]:
     """
-    Reads one required tag rule from policy.
-
-    Supported modes:
-      - must_exist
-      - must_equal_one_of
-      - must_include_one_of
+    required entry supports:
+      { "mode": "...", "allowed": [...] }
+    or shorthand:
+      "must_exist"
     """
     if isinstance(req_entry, dict):
         mode = str(req_entry.get("mode", "must_exist"))
@@ -84,10 +74,6 @@ def _parse_required_entry(req_entry: Any) -> Tuple[str, Optional[List[str]]]:
 
 
 def _entity_any_tag_text(tags: Dict[str, List[str]]) -> str:
-    """
-    Build a searchable blob from tag keys + values.
-    Used by derived mapping rules.
-    """
     parts: List[str] = []
     for k, vals in tags.items():
         parts.append(str(k))
@@ -102,9 +88,8 @@ def _contains_any_case_insensitive(haystack: str, needles: List[str]) -> bool:
 
 def derive_tag_value(key: str, entity: Dict[str, Any], tags: Dict[str, List[str]], policy: Dict[str, Any]) -> Optional[str]:
     """
-    If a required tag is missing, we may be able to derive it (like team mapping).
-
-    This is intentionally policy-driven so you mostly edit tag_policy.json.
+    Derive missing tag values from policy["derived"] rules.
+    This is how team mapping works without editing Python.
     """
     derived = policy.get("derived") or {}
     spec = derived.get(key)
@@ -121,7 +106,6 @@ def derive_tag_value(key: str, entity: Dict[str, Any], tags: Dict[str, List[str]
     for rule in rules:
         if not isinstance(rule, dict):
             continue
-
         source = rule.get("source")
         match = rule.get("match")
         needles = rule.get("needles") or []
@@ -132,7 +116,6 @@ def derive_tag_value(key: str, entity: Dict[str, Any], tags: Dict[str, List[str]
         if not isinstance(value, str) or not value.strip():
             continue
 
-        # Choose what text we search
         if source == "entity_name":
             haystack = entity_name
         elif source == "any_tag_text":
@@ -140,7 +123,6 @@ def derive_tag_value(key: str, entity: Dict[str, Any], tags: Dict[str, List[str]
         else:
             continue
 
-        # Match strategy
         if match == "contains_any":
             if _contains_any_case_insensitive(haystack, [str(x) for x in needles]):
                 return value
@@ -159,37 +141,31 @@ def evaluate_entity(
     """
     Evaluate entity vs policy.
 
-    Your preference:
-      - mostly ADD required tags that are missing
-      - do NOT mess with existing tags
-
-    Therefore:
-      - missing tags => propose ADD if we can derive or default
-      - invalid existing tags => flag invalid, and ONLY propose REPLACE if propose_replacements=True
+    Default behavior:
+      - mostly ADD missing required tags
+      - do NOT replace existing values unless propose_replacements=True
     """
     protected = set(policy.get("protected_keys") or [])
     required = policy.get("required") or {}
     defaults = policy.get("defaults") or {}
 
     tags = normalize_tags(entity.get("tags"))
+    all_current_tags = tags.copy()
 
     present_required: Dict[str, Dict[str, Any]] = {}
     missing: List[str] = []
     invalid: List[Dict[str, Any]] = []
-
     proposed_add: Dict[str, List[str]] = {}
     proposed_replace: Dict[str, List[str]] = {}
 
     for key, req_entry in required.items():
         if key in protected:
-            # hard safety: never touch protected keys
             continue
 
         mode, allowed = _parse_required_entry(req_entry)
         current_vals = tags.get(key, [])
         present = (key in tags) and len(current_vals) > 0
 
-        # Track required tags that are already present (for reporting)
         present_required[key] = {"present": present, "values": current_vals}
 
         default_val = defaults.get(key)
@@ -198,17 +174,14 @@ def evaluate_entity(
         derived_val = derive_tag_value(key, entity, tags, policy) if not present else None
         derived_list = [derived_val] if derived_val is not None else None
 
-        # ---------------- must_exist ----------------
         if mode == "must_exist":
             if not present:
                 missing.append(key)
-                # propose add if we can
                 if derived_list is not None:
                     proposed_add[key] = derived_list
                 elif default_list is not None:
                     proposed_add[key] = default_list
 
-        # ---------------- must_equal_one_of ----------------
         elif mode == "must_equal_one_of":
             if not present:
                 missing.append(key)
@@ -232,7 +205,6 @@ def evaluate_entity(
                         if allowed is None or default_list[0] in allowed:
                             proposed_replace[key] = default_list
 
-        # ---------------- must_include_one_of ----------------
         elif mode == "must_include_one_of":
             if not present:
                 missing.append(key)
@@ -275,6 +247,7 @@ def evaluate_entity(
         "name": entity.get("name"),
         "entityType": entity.get("entityType") or entity.get("type"),
         "domain": entity.get("domain"),
+        "all_current_tags": all_current_tags,
         "present_required": present_required,
         "missing": missing,
         "invalid": invalid,

@@ -68,11 +68,17 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Export New Relic entities + tags to JSON.\n"
-            "Default: exports everything in the account (accountId query only).\n"
-            "Optional: pass --filters to narrow what you export."
+            "Default query = everything in the account.\n"
+            "You can pass --account-id or set NR_ACCOUNT_ID."
         )
     )
-    parser.add_argument("--account-id", type=int, required=True, help="New Relic account ID")
+    parser.add_argument(
+        "--account-id",
+        type=int,
+        required=False,
+        default=None,
+        help="New Relic account ID (optional if NR_ACCOUNT_ID is set)",
+    )
     parser.add_argument("--query", type=str, default=None, help="Custom entitySearch query (advanced)")
     parser.add_argument("--out", type=str, required=True, help="Output JSON path")
     parser.add_argument("--limit-pages", type=int, default=None, help="Stop after N pages (debug)")
@@ -88,20 +94,34 @@ def main():
     if not api_key:
         raise SystemExit("ERROR: NR_API_KEY env var not set")
 
-    q = args.query or f"accountId = {args.account_id}"
+    # Prefer CLI --account-id, otherwise env var NR_ACCOUNT_ID
+    account_id = args.account_id
+    if account_id is None:
+        env_acct = os.environ.get("NR_ACCOUNT_ID")
+        if env_acct and env_acct.strip().isdigit():
+            account_id = int(env_acct.strip())
+
+    if account_id is None and not args.query:
+        raise SystemExit("ERROR: Provide --account-id or set NR_ACCOUNT_ID (or provide --query).")
+
+    q = args.query or f"accountId = {account_id}"
     logger.info(f"Export query: {q}")
 
     client = NerdGraphClient(api_key=api_key)
     entities = fetch_entities_with_tags(client, q, limit_pages=args.limit_pages, logger=logger)
 
-    # Optional post-fetch filtering (easy to maintain via filters.json)
     flt = load_filters(args.filters)
     if flt is not None:
         before = len(entities)
         entities = [e for e in entities if entity_matches_filters(e, flt)]
-        logger.info(f"Applied filters: {args.filters}  (kept {len(entities)} / {before})")
+        logger.info(f"Applied filters: {args.filters} (kept {len(entities)} / {before})")
 
-    payload = {"account_id": args.account_id, "query": q, "count": len(entities), "entities": entities}
+    payload = {
+        "account_id": account_id,
+        "query": q,
+        "count": len(entities),
+        "entities": entities,
+    }
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=False)

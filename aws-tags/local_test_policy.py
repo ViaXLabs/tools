@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""
-Local test harness (no New Relic calls).
-
-This helps you sanity-check:
-  - derived team mapping
-  - missing required tags proposals
-  - invalid tags flagged
-  - replacements only proposed when enabled
-
-Run:
-  python local_test_policy.py --policy tag_policy.json
-"""
-
 import argparse
 import json
 
