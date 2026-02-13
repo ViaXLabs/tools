@@ -197,12 +197,6 @@ def _preferred_warning_if_needed(key: str, current_vals: List[str], preferred: O
 
 
 def suggest_environment(tags: Dict[str, List[str]], policy: Dict[str, Any]) -> Optional[str]:
-    """
-    Suggest a standardized environment value, without applying it.
-    Uses:
-      - required.environment.preferred
-      - suggested.environment_map
-    """
     req_env = (policy.get("required") or {}).get("environment") or {}
     preferred = req_env.get("preferred") if isinstance(req_env, dict) else None
     preferred_list = [str(x) for x in preferred] if isinstance(preferred, list) else []
@@ -214,12 +208,10 @@ def suggest_environment(tags: Dict[str, List[str]], policy: Dict[str, Any]) -> O
     env_raw = str(env_vals[0]).strip()
     env_l = env_raw.lower()
 
-    # If already in preferred, return canonical (as listed in preferred)
     for p in preferred_list:
         if env_l == p.lower():
             return p
 
-    # Else try mapping table
     env_map = (policy.get("suggested") or {}).get("environment_map") or {}
     if isinstance(env_map, dict):
         for k, v in env_map.items():
@@ -230,18 +222,10 @@ def suggest_environment(tags: Dict[str, List[str]], policy: Dict[str, Any]) -> O
 
 
 def suggest_team(tags: Dict[str, List[str]], entity: Dict[str, Any], policy: Dict[str, Any]) -> Optional[str]:
-    """
-    Suggest a standardized team value.
-    Priority:
-      1) derived.team.rules (based on tags/name)
-      2) normalize current team value using suggested.team_normalize
-    """
-    # Try derived rules (works even if team already exists; we use it as suggestion)
     derived_val = derive_tag_value("team", entity, tags, policy)
     if derived_val:
         return derived_val
 
-    # Otherwise normalize current team value (case-insensitive)
     team_vals = tags.get("team", [])
     if not team_vals:
         return None
@@ -255,8 +239,20 @@ def suggest_team(tags: Dict[str, List[str]], entity: Dict[str, Any], policy: Dic
             if str(k).strip().lower() == cur_l:
                 return str(v).strip() or None
 
-    # Default suggestion: lowercase it (you can disable this by returning None instead)
     return cur_l if cur_l else None
+
+
+def suggest_system(tags: Dict[str, List[str]], entity: Dict[str, Any], policy: Dict[str, Any]) -> Optional[str]:
+    """
+    Report-only suggestion for system.
+
+    Uses derived.system.rules to infer canonical values like:
+      Verifications/SAVE
+      Verifications/CoreServices
+
+    This does NOT overwrite existing tags; it just shows up in the CSV as suggested_system.
+    """
+    return derive_tag_value("system", entity, tags, policy)
 
 
 def evaluate_entity(
@@ -283,9 +279,12 @@ def evaluate_entity(
     # Suggestions (report-only)
     suggested_env = suggest_environment(tags, policy)
     suggested_team_val = suggest_team(tags, entity, policy)
+    suggested_system_val = suggest_system(tags, entity, policy)
+
     suggested: Dict[str, Any] = {
         "environment": suggested_env,
-        "team": suggested_team_val
+        "team": suggested_team_val,
+        "system": suggested_system_val
     }
 
     for key, req_entry in required.items():
@@ -298,10 +297,8 @@ def evaluate_entity(
 
         present_required[key] = {"present": present, "values": current_vals}
 
-        # Soft standardization warnings (environment uses this)
         warn = _preferred_warning_if_needed(key, current_vals, preferred)
         if warn is not None:
-            # If we have a suggestion, include it in the warning to help cleanup later
             if key == "environment" and suggested_env:
                 warn["suggested"] = suggested_env
             warnings.append(warn)
@@ -309,7 +306,7 @@ def evaluate_entity(
         default_val = defaults.get(key)
         default_list = [str(default_val)] if default_val is not None else None
 
-        # Derived values only used when tag is missing (ADD-only behavior)
+        # ADD-only behavior: derive only when missing
         derived_val = derive_tag_value(key, entity, tags, policy) if not present else None
         derived_list = [derived_val] if derived_val is not None else None
 
@@ -379,12 +376,7 @@ def evaluate_entity(
                 }
             )
 
-    # IMPORTANT: warnings and suggestions should still show up with --only-action-needed
     action_needed = bool(missing or invalid or warnings or proposed_add or proposed_replace)
-
-    # If you want suggestions alone to trigger action_needed, uncomment:
-    # if suggested_env or suggested_team_val:
-    #     action_needed = True
 
     return {
         "guid": entity.get("guid"),

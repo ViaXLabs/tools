@@ -8,7 +8,8 @@
         "Verifications/SAVE",
         "Verifications/SVS",
         "Verifications/VisPET",
-        "Verifications/VDIS"
+        "Verifications/VDIS",
+        "Verifications/CoreServices"
       ]
     },
 
@@ -78,6 +79,23 @@
   },
 
   "derived": {
+    "system": {
+      "rules": [
+        {
+          "source": "any_tag_text",
+          "match": "contains_any",
+          "needles": ["save"],
+          "value": "Verifications/SAVE"
+        },
+        {
+          "source": "entity_name",
+          "match": "contains_any",
+          "needles": ["vis-core-services", "vcs", "core-"],
+          "value": "Verifications/CoreServices"
+        }
+      ]
+    },
+
     "team": {
       "rules": [
         {

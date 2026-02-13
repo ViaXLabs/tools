@@ -90,6 +90,7 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
         "action_needed",
         "suggested_environment",
         "suggested_team",
+        "suggested_system",
         "warnings_keys",
         "warnings",
         "all_current_tags",
@@ -120,6 +121,7 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
             suggested = e.get("suggested") or {}
             suggested_env = suggested.get("environment") or ""
             suggested_team = suggested.get("team") or ""
+            suggested_system = suggested.get("system") or ""
 
             would_be = compute_would_be_tags(e)
 
@@ -131,6 +133,7 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
                 "action_needed": bool(e.get("action_needed")),
                 "suggested_environment": suggested_env,
                 "suggested_team": suggested_team,
+                "suggested_system": suggested_system,
                 "warnings_keys": ";".join([str(k) for k in warning_keys]),
                 "warnings": _compact(warnings),
                 "all_current_tags": _compact(e.get("all_current_tags") or {}),
@@ -156,6 +159,7 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
         "action_needed",
         "suggested_environment",
         "suggested_team",
+        "suggested_system",
         "warnings_keys",
         "missing_keys",
         "invalid_keys",
@@ -171,12 +175,14 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
         for e in entries:
             invalid = e.get("invalid") or []
             invalid_keys = [x.get("key") for x in invalid if isinstance(x, dict)]
+
             warnings = e.get("warnings") or []
             warning_keys = [x.get("key") for x in warnings if isinstance(x, dict) and x.get("key")]
 
             suggested = e.get("suggested") or {}
             suggested_env = suggested.get("environment") or ""
             suggested_team = suggested.get("team") or ""
+            suggested_system = suggested.get("system") or ""
 
             would_be = compute_would_be_tags(e)
 
@@ -188,6 +194,7 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
                 "action_needed": bool(e.get("action_needed")),
                 "suggested_environment": suggested_env,
                 "suggested_team": suggested_team,
+                "suggested_system": suggested_system,
                 "warnings_keys": ";".join([str(k) for k in warning_keys]),
                 "missing_keys": ";".join(e.get("missing") or []),
                 "invalid_keys": ";".join([k for k in invalid_keys if k]),
@@ -212,6 +219,7 @@ def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]]
         "action_needed",
         "suggested_environment",
         "suggested_team",
+        "suggested_system",
         "warnings_keys",
         "missing_keys",
         "invalid_keys",
@@ -227,12 +235,14 @@ def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]]
         for e in entries:
             invalid = e.get("invalid") or []
             invalid_keys = [x.get("key") for x in invalid if isinstance(x, dict)]
+
             warnings = e.get("warnings") or []
             warning_keys = [x.get("key") for x in warnings if isinstance(x, dict) and x.get("key")]
 
             suggested = e.get("suggested") or {}
             suggested_env = suggested.get("environment") or ""
             suggested_team = suggested.get("team") or ""
+            suggested_system = suggested.get("system") or ""
 
             would_be = compute_would_be_tags(e)
 
@@ -244,6 +254,7 @@ def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]]
                 "action_needed": bool(e.get("action_needed")),
                 "suggested_environment": suggested_env,
                 "suggested_team": suggested_team,
+                "suggested_system": suggested_system,
                 "warnings_keys": ";".join([str(k) for k in warning_keys]),
                 "missing_keys": ";".join(e.get("missing") or []),
                 "invalid_keys": ";".join([k for k in invalid_keys if k]),
