@@ -12,7 +12,6 @@ def setup_logging(log_file: Optional[str] = None, verbose: bool = False) -> logg
     logger = logging.getLogger("nr_tag_tool")
     logger.setLevel(logging.DEBUG)
 
-    # Prevent duplicate handlers if re-imported
     if logger.handlers:
         return logger
 

@@ -74,18 +74,10 @@ def _collect_all_tag_keys_from_entries(entries: List[Dict[str, Any]]) -> List[st
 
 
 def _collect_all_keys_required_first(entries: List[Dict[str, Any]], policy: Dict[str, Any]) -> List[str]:
-    """
-    Friendly order for WIDE ALL:
-      - required keys first (policy order, normalized to alpha but still first)
-      - then all other keys alphabetically
-    """
     required_keys = _collect_required_tag_keys_from_policy(policy)
     all_keys = _collect_all_tag_keys_from_entries(entries)
-
     required_lower = {k.lower() for k in required_keys}
-
     others = [k for k in all_keys if k.lower() not in required_lower]
-    # keep required first, then others
     return required_keys + others
 
 
@@ -96,6 +88,10 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
         "domain",
         "entityType",
         "action_needed",
+        "suggested_environment",
+        "suggested_team",
+        "warnings_keys",
+        "warnings",
         "all_current_tags",
         "would_be_tags",
         "missing_keys",
@@ -103,7 +99,7 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
         "present_required_keys",
         "present_required_values",
         "proposed_add",
-        "proposed_replace",
+        "proposed_replace"
     ]
 
     with open(out_path, "w", newline="", encoding="utf-8") as f:
@@ -118,6 +114,13 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
             invalid = e.get("invalid") or []
             invalid_keys = [x.get("key") for x in invalid if isinstance(x, dict)]
 
+            warnings = e.get("warnings") or []
+            warning_keys = [x.get("key") for x in warnings if isinstance(x, dict) and x.get("key")]
+
+            suggested = e.get("suggested") or {}
+            suggested_env = suggested.get("environment") or ""
+            suggested_team = suggested.get("team") or ""
+
             would_be = compute_would_be_tags(e)
 
             row = {
@@ -126,6 +129,10 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
                 "domain": e.get("domain", ""),
                 "entityType": e.get("entityType", ""),
                 "action_needed": bool(e.get("action_needed")),
+                "suggested_environment": suggested_env,
+                "suggested_team": suggested_team,
+                "warnings_keys": ";".join([str(k) for k in warning_keys]),
+                "warnings": _compact(warnings),
                 "all_current_tags": _compact(e.get("all_current_tags") or {}),
                 "would_be_tags": _compact(would_be),
                 "missing_keys": ";".join(e.get("missing") or []),
@@ -133,7 +140,7 @@ def write_check_report_csv(out_path: str, entries: List[Dict[str, Any]]) -> None
                 "present_required_keys": ";".join(sorted(present_keys)),
                 "present_required_values": _compact(present_vals),
                 "proposed_add": _compact((e.get("proposed") or {}).get("add") or {}),
-                "proposed_replace": _compact((e.get("proposed") or {}).get("replace") or {}),
+                "proposed_replace": _compact((e.get("proposed") or {}).get("replace") or {})
             }
             w.writerow(row)
 
@@ -147,10 +154,13 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
         "domain",
         "entityType",
         "action_needed",
+        "suggested_environment",
+        "suggested_team",
+        "warnings_keys",
         "missing_keys",
         "invalid_keys",
         "proposed_add",
-        "proposed_replace",
+        "proposed_replace"
     ]
     fieldnames = base_fields + required_keys
 
@@ -161,6 +171,13 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
         for e in entries:
             invalid = e.get("invalid") or []
             invalid_keys = [x.get("key") for x in invalid if isinstance(x, dict)]
+            warnings = e.get("warnings") or []
+            warning_keys = [x.get("key") for x in warnings if isinstance(x, dict) and x.get("key")]
+
+            suggested = e.get("suggested") or {}
+            suggested_env = suggested.get("environment") or ""
+            suggested_team = suggested.get("team") or ""
+
             would_be = compute_would_be_tags(e)
 
             row = {
@@ -169,10 +186,13 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
                 "domain": e.get("domain", ""),
                 "entityType": e.get("entityType", ""),
                 "action_needed": bool(e.get("action_needed")),
+                "suggested_environment": suggested_env,
+                "suggested_team": suggested_team,
+                "warnings_keys": ";".join([str(k) for k in warning_keys]),
                 "missing_keys": ";".join(e.get("missing") or []),
                 "invalid_keys": ";".join([k for k in invalid_keys if k]),
                 "proposed_add": _compact((e.get("proposed") or {}).get("add") or {}),
-                "proposed_replace": _compact((e.get("proposed") or {}).get("replace") or {}),
+                "proposed_replace": _compact((e.get("proposed") or {}).get("replace") or {})
             }
 
             for k in required_keys:
@@ -182,10 +202,6 @@ def write_check_report_csv_wide_required(out_path: str, entries: List[Dict[str, 
 
 
 def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]], policy: Dict[str, Any]) -> None:
-    """
-    WIDE ALL with friendly ordering:
-      required tags first, then everything else.
-    """
     tag_keys = _collect_all_keys_required_first(entries, policy)
 
     base_fields = [
@@ -194,10 +210,13 @@ def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]]
         "domain",
         "entityType",
         "action_needed",
+        "suggested_environment",
+        "suggested_team",
+        "warnings_keys",
         "missing_keys",
         "invalid_keys",
         "proposed_add",
-        "proposed_replace",
+        "proposed_replace"
     ]
     fieldnames = base_fields + tag_keys
 
@@ -208,6 +227,13 @@ def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]]
         for e in entries:
             invalid = e.get("invalid") or []
             invalid_keys = [x.get("key") for x in invalid if isinstance(x, dict)]
+            warnings = e.get("warnings") or []
+            warning_keys = [x.get("key") for x in warnings if isinstance(x, dict) and x.get("key")]
+
+            suggested = e.get("suggested") or {}
+            suggested_env = suggested.get("environment") or ""
+            suggested_team = suggested.get("team") or ""
+
             would_be = compute_would_be_tags(e)
 
             row = {
@@ -216,10 +242,13 @@ def write_check_report_csv_wide_all(out_path: str, entries: List[Dict[str, Any]]
                 "domain": e.get("domain", ""),
                 "entityType": e.get("entityType", ""),
                 "action_needed": bool(e.get("action_needed")),
+                "suggested_environment": suggested_env,
+                "suggested_team": suggested_team,
+                "warnings_keys": ";".join([str(k) for k in warning_keys]),
                 "missing_keys": ";".join(e.get("missing") or []),
                 "invalid_keys": ";".join([k for k in invalid_keys if k]),
                 "proposed_add": _compact((e.get("proposed") or {}).get("add") or {}),
-                "proposed_replace": _compact((e.get("proposed") or {}).get("replace") or {}),
+                "proposed_replace": _compact((e.get("proposed") or {}).get("replace") or {})
             }
 
             for k in tag_keys:

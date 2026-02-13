@@ -55,8 +55,7 @@ def entity_matches_filters(entity: Dict[str, Any], flt: Optional[Filters]) -> bo
     True = process entity, False = skip.
 
     Excludes always win.
-
-    Include lists only apply when they are non-empty.
+    Includes apply only when non-empty.
     Includes are AND across dimensions.
     """
     if flt is None:

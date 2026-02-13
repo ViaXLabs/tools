@@ -1,20 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# Usage:
-#   ./make_reports.sh
-#   ./make_reports.sh 1234567
-#   ./make_reports.sh 1234567 filters.json
-#
-# Uses NR_ACCOUNT_ID if you don't provide an account id.
-#
-# Outputs:
-#   entities_tags.json
-#   tag_report.json
-#   tag_report.csv
-#   tag_report_wide_required.csv
-#   tag_report_wide_all.csv
-
 ACCOUNT_ID="${1:-}"
 FILTERS="${2:-}"
 

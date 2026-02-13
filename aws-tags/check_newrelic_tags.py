@@ -26,16 +26,7 @@ def _default_wide_required_name(path: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Dry-run checker.\n"
-            "Outputs:\n"
-            "  - JSON report\n"
-            "  - Normal CSV (current tags + would-be tags JSON)\n"
-            "  - Wide CSV (REQUIRED tags only)\n"
-            "  - Wide CSV (ALL tags, required columns first)\n"
-        )
-    )
+    parser = argparse.ArgumentParser(description="Dry-run checker: outputs JSON + CSV reports.")
     parser.add_argument("--in", dest="in_path", required=True, help="Input JSON from export_newrelic_entity_tags.py")
     parser.add_argument("--policy", required=True, help="tag_policy.json path")
     parser.add_argument("--filters", type=str, default=None, help="Optional filters.json path (review only subset)")
@@ -88,8 +79,13 @@ def main():
             action_needed_count += 1
             add_map = (entry.get("proposed") or {}).get("add") or {}
             rep_map = (entry.get("proposed") or {}).get("replace") or {}
+            warnings = entry.get("warnings") or []
+            suggested = entry.get("suggested") or {}
+
             if add_map or rep_map:
                 logger.info(f"[PROPOSE] {entry.get('name')} ({entry.get('guid')}) ADD={add_map} REPLACE={rep_map}")
+            elif warnings:
+                logger.info(f"[WARN] {entry.get('name')} ({entry.get('guid')}) warnings={len(warnings)} suggested={suggested}")
             else:
                 logger.info(
                     f"[FLAG] {entry.get('name')} ({entry.get('guid')}) "
@@ -109,7 +105,7 @@ def main():
         "entities_in_report": len(report_entries),
         "action_needed": action_needed_count,
         "propose_replacements": bool(args.propose_replacements),
-        "entries": report_entries,
+        "entries": report_entries
     }
 
     with open(args.out_json, "w", encoding="utf-8") as f:

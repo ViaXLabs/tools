@@ -52,11 +52,7 @@ def fail_if_errors(obj: Dict[str, Any], path: List[str]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Apply proposed changes from tag_report.json.\n"
-            "Default: apply ADDs only.\n"
-            "Always writes CSV apply_log showing DRY_RUN or OK/ERROR."
-        )
+        description="Apply proposed changes from tag_report.json. Default is ADD-only; supports --dry-run."
     )
     parser.add_argument("--report", required=True, help="tag_report.json from checker")
     parser.add_argument("--policy", required=True, help="tag_policy.json (protected_keys enforced)")
@@ -128,16 +124,7 @@ def main():
         for k, vals in add_map.items():
             if args.dry_run:
                 apply_rows.append(
-                    {
-                        "timestamp": now_iso(),
-                        "guid": guid,
-                        "name": name,
-                        "action": "ADD",
-                        "key": k,
-                        "values": json.dumps(vals),
-                        "result": "DRY_RUN",
-                        "error": "",
-                    }
+                    {"timestamp": now_iso(), "guid": guid, "name": name, "action": "ADD", "key": k, "values": json.dumps(vals), "result": "DRY_RUN", "error": ""}
                 )
                 continue
 
@@ -145,45 +132,18 @@ def main():
                 resp = client.graphql(MUTATION_ADD_TAGS, {"guid": guid, "tags": to_tag_inputs({k: vals})})
                 fail_if_errors(resp.get("data", {}) or {}, ["taggingAddTagsToEntity"])
                 apply_rows.append(
-                    {
-                        "timestamp": now_iso(),
-                        "guid": guid,
-                        "name": name,
-                        "action": "ADD",
-                        "key": k,
-                        "values": json.dumps(vals),
-                        "result": "OK",
-                        "error": "",
-                    }
+                    {"timestamp": now_iso(), "guid": guid, "name": name, "action": "ADD", "key": k, "values": json.dumps(vals), "result": "OK", "error": ""}
                 )
             except Exception as e:
                 logger.error(f"  ERROR adding {k}={vals}: {e}")
                 apply_rows.append(
-                    {
-                        "timestamp": now_iso(),
-                        "guid": guid,
-                        "name": name,
-                        "action": "ADD",
-                        "key": k,
-                        "values": json.dumps(vals),
-                        "result": "ERROR",
-                        "error": str(e),
-                    }
+                    {"timestamp": now_iso(), "guid": guid, "name": name, "action": "ADD", "key": k, "values": json.dumps(vals), "result": "ERROR", "error": str(e)}
                 )
 
         for k, vals in rep_map.items():
             if args.dry_run:
                 apply_rows.append(
-                    {
-                        "timestamp": now_iso(),
-                        "guid": guid,
-                        "name": name,
-                        "action": "REPLACE",
-                        "key": k,
-                        "values": json.dumps(vals),
-                        "result": "DRY_RUN",
-                        "error": "",
-                    }
+                    {"timestamp": now_iso(), "guid": guid, "name": name, "action": "REPLACE", "key": k, "values": json.dumps(vals), "result": "DRY_RUN", "error": ""}
                 )
                 continue
 
@@ -191,30 +151,12 @@ def main():
                 resp = client.graphql(MUTATION_REPLACE_TAGS, {"guid": guid, "tags": to_tag_inputs({k: vals})})
                 fail_if_errors(resp.get("data", {}) or {}, ["taggingReplaceTagsOnEntity"])
                 apply_rows.append(
-                    {
-                        "timestamp": now_iso(),
-                        "guid": guid,
-                        "name": name,
-                        "action": "REPLACE",
-                        "key": k,
-                        "values": json.dumps(vals),
-                        "result": "OK",
-                        "error": "",
-                    }
+                    {"timestamp": now_iso(), "guid": guid, "name": name, "action": "REPLACE", "key": k, "values": json.dumps(vals), "result": "OK", "error": ""}
                 )
             except Exception as e:
                 logger.error(f"  ERROR replacing {k}={vals}: {e}")
                 apply_rows.append(
-                    {
-                        "timestamp": now_iso(),
-                        "guid": guid,
-                        "name": name,
-                        "action": "REPLACE",
-                        "key": k,
-                        "values": json.dumps(vals),
-                        "result": "ERROR",
-                        "error": str(e),
-                    }
+                    {"timestamp": now_iso(), "guid": guid, "name": name, "action": "REPLACE", "key": k, "values": json.dumps(vals), "result": "ERROR", "error": str(e)}
                 )
 
         processed += 1

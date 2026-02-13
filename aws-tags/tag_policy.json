@@ -1,5 +1,6 @@
 {
   "protected_keys": ["TOC"],
+
   "required": {
     "system": {
       "mode": "must_equal_one_of",
@@ -10,25 +11,72 @@
         "Verifications/VDIS"
       ]
     },
-    "environment": { "mode": "must_exist" },
+
+    "environment": {
+      "mode": "must_exist",
+      "preferred": ["dev", "test", "preprod", "stage", "prod"]
+    },
+
     "poc": { "mode": "must_exist" },
     "team": { "mode": "must_exist" },
     "application": { "mode": "must_exist" },
     "related_application": { "mode": "must_exist" },
     "conditionTag": { "mode": "must_exist" },
+
+    "aws_account": {
+      "mode": "must_equal_one_of",
+      "allowed": ["Prod", "Non-Prod"]
+    },
+
+    "eks_cluster": {
+      "mode": "must_equal_one_of",
+      "allowed": ["VIS Prod", "VIS Non-Prod"]
+    },
+
     "criticality": {
       "mode": "must_equal_one_of",
       "allowed": ["low", "medium", "high"]
     },
+
     "business_impact": {
       "mode": "must_equal_one_of",
       "allowed": ["low", "medium", "high"]
     }
   },
+
   "defaults": {
     "criticality": "low",
     "business_impact": "low"
   },
+
+  "suggested": {
+    "environment_map": {
+      "staging": "stage",
+      "stage": "stage",
+      "preview": "preprod",
+      "performance": "test",
+      "certification": "test",
+      "external test": "test",
+      "extenral test": "test",
+      "systest": "test",
+      "devtest": "test",
+      "nonprod": "test",
+      "nonpord": "test",
+      "demo": "dev",
+      "unstable": "dev",
+      "pro-prod": "preprod",
+      "production": "prod"
+    },
+
+    "team_normalize": {
+      "save": "save",
+      "svs": "svs",
+      "vdis": "vdis",
+      "vispet": "vispet",
+      "pet": "pet"
+    }
+  },
+
   "derived": {
     "team": {
       "rules": [
@@ -43,6 +91,68 @@
           "match": "contains_any",
           "needles": ["pet", "pe"],
           "value": "pet"
+        }
+      ]
+    },
+
+    "criticality": {
+      "rules": [
+        {
+          "source": "tag_value",
+          "tag_key": "environment",
+          "match": "equals_any",
+          "needles": ["prod", "production"],
+          "value": "high"
+        }
+      ]
+    },
+
+    "business_impact": {
+      "rules": [
+        {
+          "source": "tag_value",
+          "tag_key": "environment",
+          "match": "equals_any",
+          "needles": ["prod", "production"],
+          "value": "high"
+        }
+      ]
+    },
+
+    "aws_account": {
+      "rules": [
+        {
+          "source": "tag_value",
+          "tag_key": "environment",
+          "match": "equals_any",
+          "needles": ["prod", "production"],
+          "value": "Prod"
+        },
+        {
+          "source": "tag_value",
+          "tag_key": "environment",
+          "match": "exists",
+          "needles": [],
+          "value": "Non-Prod"
+        }
+      ]
+    },
+
+    "eks_cluster": {
+      "rules": [
+        {
+          "source": "tag_value",
+          "tag_key": "environment",
+          "match": "equals_any",
+          "needles": ["prod", "production"],
+          "value": "VIS Prod"
+        },
+        {
+          "source": "tag_value",
+          "tag_key": "environment",
+          "match": "exists",
+          "needles": [],
+          "value": "VIS Non-Prod"
         }
       ]
     }
