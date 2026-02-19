@@ -24,9 +24,9 @@ tag_policy.json → required.system.allowed
 
 Examples:
 
-Verifications/SAVE
+PROGRAM/SAVE
 
-Verifications/CoreServices
+PROGRAM/CoreServices
 
 How the tool fills it in:
 
@@ -45,8 +45,8 @@ Example rule:
 {
   "source": "entity_name",
   "match": "contains_any",
-  "needles": ["vis-core-services", "vcs", "core-"],
-  "value": "Verifications/CoreServices"
+  "needles": ["PROGRAM-core-services", "vcs", "core-"],
+  "value": "PROGRAM/CoreServices"
 }
 Reports also include:
 
@@ -58,13 +58,13 @@ This tool treats these as required:
 
 aws_account: must be "Prod" or "Non-Prod"
 
-eks_cluster: must be "VIS Prod" or "VIS Non-Prod"
+eks_cluster: must be "PROGRAM Prod" or "PROGRAM Non-Prod"
 
 If missing, they are derived from environment:
 
-env prod/production => aws_account=Prod, eks_cluster="VIS Prod"
+env prod/production => aws_account=Prod, eks_cluster="PROGRAM Prod"
 
-any other env value (as long as environment exists) => aws_account=Non-Prod, eks_cluster="VIS Non-Prod"
+any other env value (as long as environment exists) => aws_account=Non-Prod, eks_cluster="PROGRAM Non-Prod"
 
 Environment standardization (keep current, but flag + suggest)
 Target standard values:

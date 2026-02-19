@@ -5,6 +5,7 @@
 ---
 
 ## **Branch Type**
+
 <!-- Select the branch type for this PR: -->
 
 - [ ] Feature: New functionality or enhancement.
@@ -16,11 +17,13 @@
 ---
 
 ## **Summary**
+
 <!-- A brief description of the purpose of this PR. What problem does it solve? -->
 
 ---
 
 ## **Changes Introduced**
+
 <!-- Provide a concise summary of what changes this PR introduces to the codebase. -->
 
 - **Feature 1:** Describe new feature or enhancement.
@@ -30,6 +33,7 @@
 ---
 
 ## **Checklist**
+
 <!-- Ensure these tasks are completed before requesting a review. -->
 
 - [ ] My code follows the coding style guidelines of this project.
@@ -40,13 +44,16 @@
 ---
 
 ## **Related Issues**
+
 <!-- Link to any related issues, e.g., GitHub Issues, JIRA Tickets. -->
+
 - Resolves #<issue-number>
 - Implements ex: [VIAXAMS-0001](https://github.com/ViaXLabs/)
 
 ---
 
 ## **Testing Instructions**
+
 <!-- Provide step-by-step instructions for how to test the changes. -->
 
 1. **Step 1:** Navigate to `...`.
@@ -56,11 +63,13 @@
 ---
 
 ## **Screenshots/Video (if applicable)**
-<!-- Add visual references if necessary. -->
+
+<!-- Add PROGRAMual references if necessary. -->
 
 ---
 
 ## **Deployment Notes**
+
 <!-- Notes on deployment, migrations, or configuration changes required. -->
 
 - [ ] New environment variables:
@@ -71,6 +80,7 @@
 ---
 
 ## **Notes for Reviewers**
+
 <!-- Anything you'd like reviewers to focus on. -->
 
 - Specific edge cases to test.

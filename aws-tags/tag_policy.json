@@ -5,11 +5,11 @@
     "system": {
       "mode": "must_equal_one_of",
       "allowed": [
-        "Verifications/SAVE",
-        "Verifications/SVS",
-        "Verifications/VisPET",
-        "Verifications/VDIS",
-        "Verifications/CoreServices"
+        "PROGRAM/SAVE",
+        "PROGRAM/SVS",
+        "PROGRAM/PROGRAMPET",
+        "PROGRAM/VDIS",
+        "PROGRAM/CoreServices"
       ]
     },
 
@@ -31,7 +31,7 @@
 
     "eks_cluster": {
       "mode": "must_equal_one_of",
-      "allowed": ["VIS Prod", "VIS Non-Prod"]
+      "allowed": ["PROGRAM Prod", "PROGRAM Non-Prod"]
     },
 
     "criticality": {
@@ -73,7 +73,7 @@
       "save": "save",
       "svs": "svs",
       "vdis": "vdis",
-      "vispet": "vispet",
+      "PROGRAMpet": "PROGRAMpet",
       "pet": "pet"
     }
   },
@@ -85,13 +85,13 @@
           "source": "any_tag_text",
           "match": "contains_any",
           "needles": ["save"],
-          "value": "Verifications/SAVE"
+          "value": "PROGRAM/SAVE"
         },
         {
           "source": "entity_name",
           "match": "contains_any",
-          "needles": ["vis-core-services", "vcs", "core-"],
-          "value": "Verifications/CoreServices"
+          "needles": ["PROGRAM-core-services", "vcs", "core-"],
+          "value": "PROGRAM/CoreServices"
         }
       ]
     },
@@ -163,14 +163,14 @@
           "tag_key": "environment",
           "match": "equals_any",
           "needles": ["prod", "production"],
-          "value": "VIS Prod"
+          "value": "PROGRAM Prod"
         },
         {
           "source": "tag_value",
           "tag_key": "environment",
           "match": "exists",
           "needles": [],
-          "value": "VIS Non-Prod"
+          "value": "PROGRAM Non-Prod"
         }
       ]
     }

@@ -247,8 +247,8 @@ def suggest_system(tags: Dict[str, List[str]], entity: Dict[str, Any], policy: D
     Report-only suggestion for system.
 
     Uses derived.system.rules to infer canonical values like:
-      Verifications/SAVE
-      Verifications/CoreServices
+      PROGRAM/SAVE
+      PROGRAM/CoreServices
 
     This does NOT overwrite existing tags; it just shows up in the CSV as suggested_system.
     """
