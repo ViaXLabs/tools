@@ -1,0 +1,157 @@
+Got it — this is a classic TFLint behavior, and the good news is it's easy to fix without restructuring anything or uncommenting your files.
+
+## What's actually happening
+
+The warning `terraform_required_version` comes from TFLint's **terraform_standard_module_structure** / **terraform_required_version** rule. TFLint walks *every directory* that contains `.tf` files and checks each one as if it were a standalone Terraform module. It doesn't care that the resources inside are commented out — as long as the directory has a `.tf` file (even an empty one, or one with only comments), TFLint treats it as a module and expects it to declare a `required_version`.
+
+That's why you're seeing 79 warnings across `application_alerts`, `ecs_alerts`, etc. Each of those folders looks like a "module" to TFLint, and none of them declare a `terraform { required_version = "..." }` block.
+
+Commenting out resources doesn't help because the rule isn't looking at resources — it's looking for the presence of a `terraform` block with `required_version` at the module root.
+
+## Your options
+
+**Option 1: Disable the rule in `.tflint.hcl` (fastest)**
+
+Add this to your `.tflint.hcl`:
+
+```hcl
+rule "terraform_required_version" {
+  enabled = false
+}
+```
+
+If you also want to silence the related structural nags:
+
+```hcl
+rule "terraform_required_version" {
+  enabled = false
+}
+
+rule "terraform_required_providers" {
+  enabled = false
+}
+
+rule "terraform_standard_module_structure" {
+  enabled = false
+}
+```
+
+Make sure Harness is actually picking up this config — if TFLint runs from a different working directory in the pipeline than where your `.tflint.hcl` lives, it won't find it. You can force it with `tflint --config=/path/to/.tflint.hcl` in your pipeline step.
+
+**Option 2: Add a `versions.tf` to each module folder (the "correct" fix)**
+
+This is what the rule is actually asking for, and it's arguably the right thing to do for a reusable module library anyway. Drop a small `versions.tf` into each module directory:
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    newrelic = {
+      source  = "newrelic/newrelic"
+      version = ">= 3.0"
+    }
+  }
+}
+```
+
+You can script this — something like `find modules/ -type d -exec cp templates/versions.tf {} \;` with a bit of care. Once it's in place, the warnings disappear and your modules become properly pinnable downstream.
+
+**Option 3: Scope TFLint to only the directory you care about**
+
+If you're only working on RDS alerts right now, point TFLint at just that path in your Harness step rather than recursing the whole repo:
+
+```
+tflint --chdir=stacks/newrelic-alerts/database-alerts
+```
+
+That'll stop it from walking into the commented-out module folders entirely.
+
+## My recommendation
+
+For your situation — big observability repo, lots of scaffolded-but-empty module folders, wanting to keep the structure intact — I'd do **Option 1 now** to unblock the pipeline, then **Option 2 gradually** as you actually fill out each module. The `versions.tf` file is genuinely useful once a module has real content in it, but there's no point adding 79 of them to empty stubs today.
+
+One thing to double-check: is this warning actually *failing* the Harness pipeline, or just showing up as noise? TFLint warnings don't fail builds by default — you'd need `--minimum-failure-severity=warning` or similar for that. If the pipeline is failing, something else might be escalating these, and that's worth checking in your Harness step config.
+
+
+Alright, let me actually think through this carefully, because there's something specific going on here that's worth unpacking.
+
+## The core misconception
+
+Here's the thing that trips people up: **TFLint and Terraform don't care about the *content* of your `.tf` files the way you think they do.** They care about the *existence* of `.tf` files in a directory. A `.tf` file with nothing but comments is, from Terraform's perspective, still a valid Terraform configuration file. It's just an empty one. The file extension is what matters, not what's inside.
+
+So when you have a folder like `modules/ecs_alerts/main.tf` with everything commented out, TFLint sees:
+
+1. A directory exists
+2. It contains `.tf` files
+3. Therefore this is a Terraform module
+4. Therefore the `terraform_required_version` rule applies
+5. No `terraform { required_version = "..." }` block is present
+6. → Warning
+
+The comments are invisible to the rule. It's not parsing your resources and going "oh, nothing here, nevermind." It's looking at the *module as a whole* and asking "does this module declare a required Terraform version?" The answer is no, regardless of what's commented out inside.
+
+## Why your previous attempts probably didn't work
+
+Let me guess what the other AI had you try, because this is where people go in circles:
+
+**"Add `required_version` to your root module"** — doesn't help, because TFLint is flagging the *sub-module* directories, not the root. Each directory is evaluated independently.
+
+**"Comment out more stuff"** — doesn't help, for the reason above. Comments are whitespace to the linter's rule engine.
+
+**"Delete the files"** — works, but you don't want to do this because you want to preserve the scaffolding.
+
+**"Add `.tflint.hcl` with the rule disabled"** — *should* work, but often doesn't because of the next point...
+
+## The thing that's probably actually biting you
+
+**TFLint's config file discovery is directory-scoped and non-recursive by default.**
+
+When TFLint runs in a directory, it looks for `.tflint.hcl` in:
+1. The current working directory
+2. `$HOME/.tflint.hcl`
+3. Whatever you pass with `--config`
+
+It does **not** walk up the tree looking for one, and it does **not** automatically apply a root-level `.tflint.hcl` to subdirectories when you run it recursively.
+
+So here's what I suspect is happening in your Harness pipeline:
+
+- You put `.tflint.hcl` at the repo root with `rule "terraform_required_version" { enabled = false }`
+- Harness runs something like `tflint --recursive` or iterates through directories
+- When TFLint enters `modules/ecs_alerts/`, it looks for `.tflint.hcl` *in that directory*, doesn't find one, and falls back to defaults
+- The rule fires again
+- You get 79 warnings
+
+This is a known gotcha. The fix depends on your TFLint version:
+
+**TFLint 0.50+** supports `--recursive` properly and *does* propagate the root config, but you have to invoke it correctly: `tflint --recursive --config=$(pwd)/.tflint.hcl` from the repo root. The explicit `--config` with absolute path is what makes it stick.
+
+**Older TFLint versions** genuinely don't propagate, and you either need a `.tflint.hcl` in every directory (terrible) or you need to wrap the invocation in a script that passes `--config` explicitly per directory.
+
+## What I'd actually do
+
+Check three things in this order:
+
+First, what version of TFLint is running in your Harness pipeline? Run `tflint --version` as a pipeline step. If it's below 0.50, upgrade it — that alone might fix the propagation issue.
+
+Second, how is TFLint being invoked? If it's `tflint --recursive`, change it to `tflint --recursive --config=$(pwd)/.tflint.hcl` with the pipeline's working directory set to the repo root. If Harness is iterating directories and calling `tflint` in each one, you need to pass `--config` with an absolute path to your root `.tflint.hcl`.
+
+Third, and this is the sanity check: run TFLint locally from the repo root with your `.tflint.hcl` in place, and see if the warnings still appear. If they disappear locally but appear in Harness, it's 100% a pipeline invocation issue, not a config issue. If they appear locally too, your `.tflint.hcl` isn't disabling what you think it's disabling — double-check the rule name (it's `terraform_required_version`, exactly, with the underscore) and that the file is valid HCL.
+
+## The deeper "why" you asked about
+
+To directly answer your question — *why is it moaning about files that are commented out* — it's because:
+
+The `terraform_required_version` rule is a **module-level** rule, not a **resource-level** rule. It asks one question per directory: "does this module declare a required Terraform version?" It doesn't look at resources, data sources, or any of the content that might be commented out. It only looks for the presence of a `terraform {}` block with a `required_version` attribute anywhere in the module's `.tf` files.
+
+An empty file (or a file full of comments) is still part of the module. The module still exists as a concept because the directory contains `.tf` files. So the rule still runs, and still fails, because no `terraform {}` block exists anywhere in any of those files.
+
+The only way to make the rule *not* fire is to either satisfy it (add the block), disable it (via config that actually gets loaded), or remove the directory from TFLint's scope entirely (don't lint it, or don't have `.tf` files in it).
+
+There is no "the files are empty so skip this module" mode. That concept doesn't exist in TFLint's rule engine.
+
+## One more thing worth checking
+
+If you want to see exactly what TFLint is doing, run it with `--loglevel=debug` or `TFLINT_LOG=debug tflint ...`. It'll tell you which config file it loaded (or didn't), which directories it's scanning, and which rules it's applying. That output will make the actual problem obvious in about 10 seconds and will save you a lot of guessing.
+
+My strong bet is that your `.tflint.hcl` isn't being loaded for the subdirectories, and the debug output will confirm that.
