@@ -1,0 +1,437 @@
+Hey. So I'm running harness, and I get in my Terraform, uh, Lent stage, a failed to run-in modules, blah blah blah, to this module that I have, exact weight weight delay expired before i slash o complete. Um, and this is an issue, and I'm trying to figure out how this works in harness so I can make this go to my pipeline. And if it's searching through some... too much Terraform, and I'm not sure the best way to control it. Thank you
+
+7:50 AM
+Let me make sure I understand your situation:
+
+You're running a Terraform Lint stage in Harness, and you're getting a timeout error like:
+
+"Failed to run/init modules... deadline expired before I/O complete"
+
+This is typically a module initialization timeout — Harness is trying to download/initialize Terraform modules and it's timing out before finishing.
+
+Here are the most common causes and fixes:
+
+1. Module source fetch is too slow If your modules are pulled from a remote source (Git, Terraform Registry, S3, etc.), the network call to fetch them is timing out. Solutions:
+
+Pin modules to a specific version/tag rather than a branch, which can be slower to resolve
+Mirror or vendor your modules — run terraform get locally and commit the .terraform/modules directory so Harness doesn't have to fetch them at runtime
+Check if your Harness delegate has network access to wherever the modules are hosted 2. Harness delegate timeout settings In Harness, you can increase the step-level timeout:
+
+In your pipeline stage, click the Lint/Terraform step → Advanced tab → Timeout
+The default is often 10m — try bumping to 20m or 30m 3. Too many modules being initialized If your Terraform config pulls in a large module tree, terraform init (which lint depends on) takes a long time. Options:
+
+Split your Terraform into smaller root modules so each lint run covers less
+Use terraform init -get=false if modules are already vendored 4. Delegate resource constraints If your delegate is under-resourced, I/O ops can hang. Check delegate CPU/memory during the run.
+
+Quick question to narrow it down: Are your Terraform modules sourced from a Git repo, the Terraform Registry, or something else? That'll help pinpoint whether it's a network/auth issue vs. a config size issue.
+
+ok... so everything here is local... take away #1 from the list...
+
+think deeper to ensure there are no ther better options...
+
+and then explain more and give expamples for #2 - #4
+
+8:50 AM
+Got it — all local modules, so no remote fetch involved. Let me go deeper on the remaining options.
+
+2. Harness Step Timeout Settings
+   The timeout error you're seeing is almost certainly Harness killing the step before terraform init/lint finishes. Every step in Harness has a timeout, and the default is usually 10m.
+
+Where to change it: In your pipeline YAML, find your lint step and add/modify the timeout field:
+
+yaml
+
+- step:
+  type: TerraformPlan # or whatever your lint step type is
+  name: Terraform Lint
+  identifier: terraform_lint
+  spec:
+  ...
+  timeout: 30m # <-- increase this
+  Or in the UI: Step → Advanced → Timeout
+
+Also check at the stage level — a stage-level timeout will override step-level:
+
+yaml
+stages:
+
+- stage:
+  name: Lint Stage
+  timeout: 30m # make sure this isn't lower than your step timeout
+  spec:
+  ...
+
+3. Too Much Terraform Being Initialized
+   Even with local modules, terraform init still has to walk and wire the entire module tree — resolving references, copying modules into .terraform/modules, and building the dependency graph. If your root module pulls in many nested local modules, this can be surprisingly slow.
+
+Option A — Vendor your modules ahead of time
+
+Run this locally or in a pre-step:
+
+bash
+terraform init -get=true
+Then commit the .terraform/modules directory. In your lint step, pass:
+
+bash
+terraform init -get=false
+This skips module resolution entirely since they're already on disk.
+
+Option B — Split your root modules
+
+Instead of one giant root module that references 20 child modules, break it into smaller independent roots:
+
+infrastructure/
+networking/ # lint this separately
+compute/ # lint this separately
+database/ # lint this separately
+Each lint run is now scoped and faster.
+
+Option C — Use -backend=false
+
+If you don't need state during lint, skip backend initialization entirely:
+
+bash
+terraform init -backend=false
+This is faster and avoids any backend connectivity overhead even for local runs.
+
+4. Delegate Resource Constraints
+   When a Harness delegate is CPU or memory starved, even local file I/O can hang long enough to hit the timeout — especially during terraform init which is disk and CPU heavy.
+
+How to check:
+
+Go to Harness → Project Settings → Delegates and look at delegate health
+If you're on Kubernetes, check the delegate pod:
+bash
+kubectl top pod -n harness-delegate-ng
+bash
+kubectl describe pod <delegate-pod-name> -n harness-delegate-ng
+Look for OOMKilled events or CPU throttling.
+
+Fix — increase delegate resources in your values.yaml (K8s):
+
+yaml
+resources:
+limits:
+cpu: "2"
+memory: "4Gi"
+requests:
+cpu: "1"
+memory: "2Gi"
+Fix — if you're running multiple pipelines concurrently, they may be competing for the same delegate. Either:
+
+Add more delegate replicas
+Use delegate selectors to dedicate a delegate to heavyweight Terraform stages:
+yaml
+
+- stage:
+  delegateSelectors: - terraform-dedicated
+  Most Likely Culprit
+  Given everything is local, I'd bet on either #2 (timeout too low) or #3 (large module tree slow to init). I'd start by:
+
+Bumping the timeout to 30m to confirm that's the issue
+Then adding -backend=false to your init to speed things up
+If still slow, vendor the modules so init skips resolution entirely
+Okay. So my repo is a Terraform modules repo that does all ops availability in my program. It's gonna handle New Relic, Splunk, and CloudWatch, and then say under New Relic, there's alerts and dashboards. And under alerts, there's RDS alerts, ECS alerts, EKS alerts, and application alerts, and so forth and so on. And on top of that... so that's the modules directory of this repo, but I'm also implementing it for the program too, at least to start off with RDS, uh, alerting. So I have all stacks directory that has all the TFR for all from all the teams and all the environments, and I have all this stuff in there. So just wanna give you some context about the repo and error that I'm working with, and I have harness, uh, doing this. And this is just for one team. So eventually, there's gonna be more teams, and I know all I'm trying to do is RDS. So think of all the other stuff. This is not even getting out of Terraform Lent. So that's my problem with Terraform Lent. But I need to think about the future going forward. So take all that in account, and, um, I love the responses you just gave, but, um, make those geared towards what I got going on. Thank you. I
+
+Show more
+9:03 AM
+Great context — now I have a much clearer picture. Let me reframe everything around your actual repo structure and where this is heading.
+
+Your Situation
+repo/
+modules/
+new_relic/
+alerts/
+rds_alerts/
+ecs_alerts/
+eks_alerts/
+application_alerts/
+dashboards/
+splunk/
+cloudwatch/
+stacks/
+team_a/
+rds/
+dev/
+staging/
+prod/
+team_b/
+...
+Right now Harness Terraform Lint is choking just on one team's RDS stack — and you haven't even touched ECS, EKS, Splunk, CloudWatch yet. This is a structural scaling problem, not just a timeout tweak.
+
+2. Timeout — Scoped to Your Reality
+   Your lint stage is almost certainly set to a low default like 10m. Given the size of your module tree even today, bump it — but more importantly, scope it per stack rather than one global timeout.
+
+yaml
+
+- stage:
+  name: Lint - Team A RDS
+  timeout: 20m # scoped to this stack only
+  spec:
+  steps: - step:
+  type: TerraformPlan
+  name: Lint RDS Stack
+  timeout: 15m
+  spec:
+  configuration:
+  configFiles:
+  store:
+  spec:
+  folderPath: stacks/team_a/rds/dev
+  Why this matters for the future: When you add ECS, EKS, and more teams, you don't want one slow stack blocking or timing out everything else. Scoped timeouts per stage give you control.
+
+3. Module Tree Size — This Is Your Real Problem
+   Even though everything is local, terraform init on any stack under stacks/ has to resolve your entire module dependency chain — and yours is deep:
+
+stacks/team_a/rds/dev
+└── modules/new_relic/alerts/rds_alerts
+└── modules/new_relic/alerts/ (shared alert base?)
+└── ... and so on
+Multiply that by every team and every environment and you can see why this explodes.
+
+Fix A — Use -backend=false on your lint step
+
+Your lint stage doesn't need state at all. Skip backend init completely:
+
+yaml
+spec:
+configuration:
+commandFlags: - commandType: Init
+flag: "-backend=false"
+This alone can cut init time significantly.
+
+Fix B — Vendor modules per stack
+
+Add a pre-step in your Harness pipeline that runs terraform init once and caches .terraform/modules:
+
+yaml
+
+- step:
+  type: Run
+  name: Vendor Modules
+  spec:
+  command: |
+  cd stacks/team_a/rds/dev
+  terraform init -backend=false
+  envVariables:
+  TF_PLUGIN_CACHE_DIR: /harness/.terraform-cache
+  Then your lint step uses -get=false since modules are already resolved.
+
+Fix C — Structure your stacks to limit module scope
+
+This is the big one for your future. Each stack should only pull in what it actually needs:
+
+hcl
+
+# stacks/team_a/rds/dev/main.tf
+
+module "rds_alerts" {
+source = "../../../../modules/new_relic/alerts/rds_alerts"
+
+# Only this module — not all of new_relic, not cloudwatch, not splunk
+
+}
+Avoid a "mega root module" pattern where stacks/team_a imports a parent module that pulls in all of New Relic, Splunk, and CloudWatch. That forces lint to init everything even if the stack only cares about RDS.
+
+4. Delegate Resources — Plan for Growth
+   Right now it's struggling with one team's RDS. When you add more teams and more services, your delegate will be running concurrent lint jobs across:
+
+team_a, team_b, team_c... (RDS, ECS, EKS per team)
+dev, staging, prod per team
+New Relic + Splunk + CloudWatch eventually
+Dedicate a delegate to Terraform workloads:
+
+yaml
+
+# Your Terraform pipeline stages
+
+- stage:
+  delegateSelectors: - terraform-ops # dedicated delegate for this repo
+  Scale the delegate for your module tree size:
+
+yaml
+
+# delegate values.yaml
+
+resources:
+limits:
+cpu: "4"
+memory: "8Gi"
+requests:
+cpu: "2"
+memory: "4Gi"
+Add replicas ahead of team growth:
+
+yaml
+replicas: 3 # handles concurrent lint runs across teams
+Recommended Immediate Action Plan
+Priority Action Impact
+1 Bump timeout to 20m Stops the bleeding today
+2 Add -backend=false to init Fast win, no structural change needed
+3 Audit your stacks — make sure each only imports what it needs Prevents the problem scaling with new teams
+4 Set up a dedicated Terraform delegate with more resources Ready for multi-team growth
+5 Add module vendoring as a pre-step Long term stability as module tree grows
+The timeout bump gets you unblocked today. But #3 is the one that will save you from this same conversation again when you're onboarding team 5 and adding CloudWatch.
+
+What was step 5 you skipped the deep dive
+
+10:03 AM
+You're right — here's the full deep dive on #5: Module Vendoring as a Pre-Step.
+
+5. Module Vendoring as a Pre-Step in Harness
+   The core idea: don't let your lint step do the module resolution work. Do it once, cache it, and let lint just use what's already there.
+
+Without vendoring, every time Harness runs your lint stage this happens:
+
+terraform init
+→ reads main.tf
+→ finds module "rds_alerts" source = "../../../../modules/new_relic/alerts/rds_alerts"
+→ walks that module's dependencies
+→ walks THOSE dependencies
+→ copies everything into .terraform/modules/
+→ THEN lint can start
+For your repo that chain gets long fast, and it happens fresh every single pipeline run.
+
+Option A — Vendor via a Harness Run Step (Pre-Step)
+Add a Run step before your Lint step in the same stage:
+
+yaml
+steps:
+
+- step:
+  type: Run
+  name: Vendor Terraform Modules
+  identifier: vendor_modules
+  spec:
+  shell: Sh
+  command: |
+  cd stacks/team_a/rds/dev
+  terraform init \
+   -backend=false \
+   -get=true \
+   No-color
+  envVariables:
+  TF_PLUGIN_CACHE_DIR: /harness/terraform-plugin-cache
+
+- step:
+  type: TerraformPlan # or your lint step type
+  name: Terraform Lint
+  identifier: terraform_lint
+  spec:
+  configuration:
+  configFiles:
+  store:
+  spec:
+  folderPath: stacks/team_a/rds/dev
+  commandFlags: - commandType: Init
+  flag: "-get=false" # <-- skip resolution, use what's already there
+  The -get=false flag on the lint init is the key — it tells Terraform "don't go find modules, they're already on disk."
+
+Option B — Commit .terraform/modules to the Repo
+Run locally:
+
+bash
+cd stacks/team_a/rds/dev
+terraform init -backend=false
+Then commit the result:
+
+bash
+git add .terraform/modules
+git commit -m "vendor modules for team_a rds stack"
+And add this to your .gitignore to be explicit about what you ARE committing:
+
+gitignore
+
+# Ignore everything in .terraform EXCEPT vendored modules
+
+.terraform/\*
+!.terraform/modules
+Now Harness never has to resolve modules at all — they're already in the repo. Your lint step just runs against what's checked in.
+
+Tradeoff: Your repo gets bigger, and you have to re-vendor when modules change. For a modules repo like yours that's actively being developed right now, this can get noisy. Better suited once your modules stabilize.
+
+Option C — Shared Plugin/Module Cache on the Delegate
+This is the most scalable option for when you have multiple teams and stacks running concurrently. You set up a persistent cache directory on the delegate so module resolution is shared across all pipeline runs:
+
+yaml
+
+# In your delegate deployment / values.yaml
+
+env:
+
+- name: TF_PLUGIN_CACHE_DIR
+  value: /opt/harness/terraform-cache/plugins
+- name: TF_DATA_DIR
+  value: /opt/harness/terraform-cache/modules
+  Then mount a persistent volume to that path on the delegate pod:
+
+yaml
+volumeMounts:
+
+- name: terraform-cache
+  mountPath: /opt/harness/terraform-cache
+
+volumes:
+
+- name: terraform-cache
+  persistentVolumeClaim:
+  claimName: terraform-cache-pvc
+  Now when team_a/rds/dev runs and resolves modules/new_relic/alerts/rds_alerts, that result sits in the cache. When team_b/rds/dev runs next and needs the same module — it's already there. No re-resolution.
+
+This is the option that scales with you as you add teams, because every new team stack benefits from modules already cached by previous runs.
+
+Which Option for Your Situation
+Option Best For Tradeoff
+A — Run pre-step Right now, quick win Re-vendors every run
+B — Commit to repo Stable/frozen modules Repo bloat, manual re-vendor on changes
+C — Delegate cache Multi-team scale Requires PVC setup on delegate
+Given where you are — actively building modules, one team now but more coming — I'd do Option A immediately to unblock yourself, and set up Option C on the delegate before you onboard the next team.
+
+So I Getting the original I/o error in harness in like 2 mins… not a long time…
+
+10:20 AM
+That's a really important detail — 2 minutes is way too fast for this to be a module tree size issue. That points to something much more specific.
+
+A 2 minute I/O timeout is almost certainly one of these:
+
+Most Likely Culprits
+
+1. Delegate Can't Reach the Module Path
+   Even though modules are local, Harness still has to mount or clone your repo onto the delegate before it can run terraform init. If the delegate is struggling to pull the repo — slow Git clone, large repo, LFS issues — it dies before it even gets to Terraform.
+
+Check:
+
+How big is your repo? Run git count-objects -vH
+Are you storing any large files in it?
+How is your repo connected in Harness — Git connector or inline? 2. Git Connector Timeout
+Your Harness Git connector fetching the repo may itself be timing out. 2 minutes lines up exactly with a default connector timeout.
+
+In Harness go to:
+
+Project Settings → Connectors → Your Git Connector → Test Connection
+See if it struggles or fails. Also check:
+
+yaml
+
+- stage:
+  spec:
+  infrastructure:
+  spec:
+  workspace: /harness # where is it cloning to?
+
+3. Workspace/Folder Path Is Wrong
+   If your folderPath in the Terraform step points to a directory that doesn't exist or is wrong, Terraform errors almost instantly trying to initialize a nonexistent path. What does your folderPath look like in the pipeline config right now?
+
+What I'd Do Right Now
+Run this in your Harness pipeline as a Run step before anything else:
+
+bash
+echo "=== Repo contents ==="
+ls -la /harness
+
+echo "=== Target stack path ==="
+ls -la /harness/stacks/team_a/rds/dev # adjust to your actual path
+
+echo "=== Git clone time ==="
+time git clone <your-repo-url> /tmp/test-clone
+That'll tell us immediately whether the problem is the repo fetch itself or Terraform init. What does your pipeline's first step actually look like right now?
