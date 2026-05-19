@@ -1,0 +1,548 @@
+
+Claude finished the response
+Alright. So I'm trying to manage my Splunk on call slash Victor ops for my program. I've had a bunch of teams, and things are all set up. And we've been kind of mature over the years. But one of the problems is that when you, like... when we go into maintenance mode. Right? So we're doing a deployment. We've told Splunk on call to go into maintenance mode, and they're gonna take down a subset or all of the apps, update them, and it's gonna cause a small outage, and we're aware of the outage, and it's off peak hours. So we put it in maintenance mode. Fine. But then when we come out of maintenance mode, everything, it's crazy because there were alerts and stuff that were opened yet not closed during that maintenance mode. Well, you'd expect that because they get open. But then we somehow have to manually close them. I'm trying to figure out how can suppress this and make this right. You understand what I'm trying to do? If you don't, ask questions.
+
+11:08 AM
+I understand the problem clearly. Here's what's happening:
+
+Maintenance mode starts → alert suppression kicks in, no pages go out
+During maintenance → alerts fire and open incidents (or get queued)
+Maintenance mode ends → those queued/open alerts suddenly become "active" and start paging people, even though the issue was already known and resolved as part of the deployment
+You're essentially getting ghost alerts — noise from a known event that you have to manually clean up after every deployment.
+
+Let me ask a few clarifying questions to give you the right solution:
+
+What's generating the alerts? (e.g., Nagios, Datadog, Prometheus, a custom monitoring tool, etc.) — because the fix might live upstream rather than in Splunk On-Call itself
+Are the alerts auto-resolving on their own once the deployment finishes and services come back healthy, or do they stay open indefinitely until someone manually closes them?
+How are you currently triggering maintenance mode? — manually through the Splunk On-Call UI, via their API, or through your deployment pipeline?
+What's your ideal end state? For example:
+Alerts that fired during maintenance get auto-resolved when maintenance ends
+Alerts only page if they're still firing after maintenance ends (not ones that already recovered)
+Something else?
+The answer to #4 especially matters, because there's a difference between "suppress everything that happened during maintenance" vs. "only page me if something is still broken after we come back up."
+
+we use new relic for alerts
+
+i think they stay open  this is the issue
+
+i think manually though the UI
+what aare our options... can we do this in harness ???
+
+Alerts that fired during maintenance get auto-resolved when maintenance ends
+
+11:20 AM
+Great context. So the core issue is:
+
+New Relic fires alerts → Splunk On-Call opens incidents → maintenance ends → those incidents just sit there open, nobody closed them → chaos
+
+And yes, New Relic alerts likely stay in a firing state until New Relic itself sees the metric recover and sends a RECOVERY signal. If the service came back healthy but New Relic didn't send that recovery (or Splunk On-Call missed it), the incident stays open forever.
+
+Your options, roughly in order of elegance:
+
+Option 1: Fix it in New Relic (ideal) New Relic should be sending RECOVERY signals automatically when conditions normalize. If it's not, that's the root cause. You'd want to check:
+
+Are your New Relic alert conditions configured with a proper "close" threshold?
+Is the webhook/integration to Splunk On-Call receiving those recovery events?
+Option 2: Use the Splunk On-Call API at end of maintenance When maintenance ends, trigger an API call that resolves all incidents that opened during the maintenance window. This is scriptable and reliable.
+
+Option 3: Yes — Harness can absolutely do this Since you're already using Harness for deployments, this is probably your cleanest path. At the end of your pipeline you could:
+
+Call the Splunk On-Call API to end the maintenance window
+Call the Splunk On-Call API to resolve open incidents
+Optionally call New Relic API to close any lingering alert conditions
+All as pipeline steps after your deployment succeeds.
+
+Before I go deeper — a few quick questions:
+
+Is your maintenance mode being triggered from Harness today at all, or purely manual?
+Do you have Harness pipelines already wrapping these deployments?
+That'll tell me whether we're building something new or just adding steps to what exists.
+
+manually today
+
+we have mature jhahrness pipes wrapping deploys
+
+11:21 AM
+Perfect. So the move here is to stop doing maintenance mode manually and instead drive the whole thing from your existing Harness pipelines. This gives you:
+
+Consistent, repeatable behavior every deploy
+No human forgetting to end maintenance mode
+Auto-cleanup of open incidents when the deploy finishes
+Here's the target architecture:
+
+Harness Pipeline
+│
+├── PRE-DEPLOY STAGE
+│   ├── Call Splunk On-Call API → Start Maintenance Window
+│   └── (optional) Call New Relic API → Mute alerts
+│
+├── DEPLOY STAGE
+│   └── ... your existing deployment steps ...
+│
+└── POST-DEPLOY STAGE
+    ├── Call Splunk On-Call API → End Maintenance Window
+    ├── Call Splunk On-Call API → Resolve all open incidents (the ghost alerts)
+    └── (optional) Call New Relic API → Unmute alerts
+The two key Splunk On-Call API calls you need:
+
+Create/end maintenance mode — POST /api-public/v1/maintenancemode
+Resolve open incidents — PATCH /api-public/v1/incidents with a resolve payload, filtered to incidents that opened during your window
+In Harness, these are just HTTP step calls with your Splunk On-Call API key stored as a Harness secret.
+
+Biggest decision point before you build this:
+
+Do you want to resolve all open incidents when maintenance ends, or only incidents that opened during the maintenance window?
+
+The latter is safer — if something was already broken before your deploy, you don't want to silently close it. That's achievable by capturing a timestamp when maintenance starts and filtering on it when you resolve.
+
+Which behavior do you want?
+
+yeah... do all that
+
+11:36 AM
+Alright, let me build you a concrete implementation guide for this. Let me first check the current Splunk On-Call and Harness APIs to make sure I give you accurate endpoint details.
+
+
+Searched the web
+Searched the web
+Good, I now have all the API details I need. Let me also check the important note I found — Splunk On-Call explicitly warns that upon ending maintenance mode, paging will be initiated from the beginning of the escalation policy for any triggered incidents, and recommends you ack and/or resolve all incidents triggered during maintenance before you end it — so the correct order of operations matters. Let me now write this all up.
+Knowledge Base
+
+Here's your complete implementation guide. The key insight from the docs: resolve incidents BEFORE ending maintenance mode, otherwise ending maintenance mode immediately starts paging on those open incidents.
+
+The Full Solution: Harness Pipeline Integration
+Secrets to store in Harness first
+Go to Harness → Account/Org/Project Settings → Secrets and store:
+
+Secret Name	Value
+splunk_oncall_api_id	Your API ID (from Splunk On-Call → Integrations → API)
+splunk_oncall_api_key	Your API Key
+splunk_oncall_username	A valid service/bot user in your org (used for resolve calls)
+Pipeline Structure
+PRE-DEPLOY STAGE
+└── Step: HTTP - Start Maintenance Mode
+    └── Capture: maintenanceInstanceId (output variable)
+
+DEPLOY STAGE
+└── ... your existing steps ...
+
+POST-DEPLOY STAGE
+├── Step 1: HTTP - Get Open Incidents
+│   └── Capture: list of triggered incident numbers
+├── Step 2: HTTP - Resolve Open Incidents  ← BEFORE ending maintenance
+└── Step 3: HTTP - End Maintenance Mode
+Step 1: Start Maintenance Mode (Pre-Deploy)
+HTTP Step config:
+
+Method:  POST
+URL:     https://api.victorops.com/api-public/v1/maintenancemode/start
+Headers:
+  X-VO-Api-Id:   <+secrets.getValue("splunk_oncall_api_id")>
+  X-VO-Api-Key:  <+secrets.getValue("splunk_oncall_api_key")>
+  Content-Type:  application/json
+
+Body:
+{
+  "purpose": "Harness Deploy - <+pipeline.name> - <+pipeline.executionId>",
+  "type": "RoutingKeys",
+  "names": ["your-routing-key-here"]   // or omit 'names' + use "type":"Global" for all
+}
+Output Variable — capture the maintenance ID:
+
+In the HTTP step's Output tab, add:
+
+Variable Name:  maintenanceModeId
+Value:          <+json("activeInstances[0].instanceId")>
+This maintenanceModeId flows into your post-deploy steps.
+
+Step 2: Get Open Incidents (Post-Deploy, Step 1)
+Method:  GET
+URL:     https://api.victorops.com/api-public/v1/incidents
+Headers:
+  X-VO-Api-Id:   <+secrets.getValue("splunk_oncall_api_id")>
+  X-VO-Api-Key:  <+secrets.getValue("splunk_oncall_api_key")>
+Output Variable:
+
+Variable Name:  openIncidentNumbers
+Value:          <+json("incidents[*].incidentNumber")>
+This gives you an array of all currently open/triggered incident numbers.
+
+Step 3: Resolve Open Incidents (Post-Deploy, Step 2)
+This is the critical step — runs before ending maintenance mode.
+
+Method:  PATCH
+URL:     https://api.victorops.com/api-public/v1/incidents/resolve
+Headers:
+  X-VO-Api-Id:   <+secrets.getValue("splunk_oncall_api_id")>
+  X-VO-Api-Key:  <+secrets.getValue("splunk_oncall_api_key")>
+  Content-Type:  application/json
+
+Body:
+{
+  "userName": "<+secrets.getValue("splunk_oncall_username")>",
+  "incidentNames": <+stage.spec.execution.steps.GetOpenIncidents.output.outputVariables.openIncidentNumbers>,
+  "message": "Auto-resolved by Harness post-deploy - <+pipeline.executionId>"
+}
+Step 4: End Maintenance Mode (Post-Deploy, Step 3)
+Method:  PUT
+URL:     https://api.victorops.com/api-public/v1/maintenancemode/<+stage.spec.execution.steps.StartMaintenanceMode.output.outputVariables.maintenanceModeId>/end
+Headers:
+  X-VO-Api-Id:   <+secrets.getValue("splunk_oncall_api_id")>
+  X-VO-Api-Key:  <+secrets.getValue("splunk_oncall_api_key")>
+No body needed — the PUT to the end endpoint is sufficient.
+
+Important: Handle Pipeline Failures
+You need these post-deploy steps to run even if the deploy fails, otherwise you'll be stuck in maintenance mode forever. In Harness, on each post-deploy step set:
+
+Run condition: Always
+Or wrap the post-deploy steps in a Failure Strategy that runs the cleanup stage regardless of prior step status.
+
+One Gotcha to Watch For
+The GET incidents endpoint returns all open incidents org-wide, not just ones from your maintenance window. If other teams have unrelated open incidents, this will resolve those too.
+
+To scope it tighter, use the reporting API instead for Step 2, which lets you filter by startedAfter timestamp:
+
+GET https://api.victorops.com/api-reporting/v1/incidents
+  ?startedAfter=<+pipeline.startTs>
+  &currentPhase=triggered
+This only grabs incidents that opened after your pipeline started — much safer in a shared org. Worth doing if multiple teams share the same Splunk On-Call instance.
+
+Want me to produce a full Harness YAML pipeline template you can drop right in?
+
+yes
+
+11:37 AM
+
+Check available skills
+Check available skills
+No specific skill for YAML files — I'll write this directly. Let me build the complete Harness pipeline YAML.
+
+
+Created a file, read a file
+Created a file, read a file
+Here's your pipeline YAML. A few things to do before you drop it in:
+
+Required edits (search for CHANGE_ME):
+
+projectIdentifier / orgIdentifier — your Harness org/project slugs
+routing_keys variable default — your actual Splunk On-Call routing key name(s)
+The entire Deploy stage — replace the placeholder K8s steps with your real existing deploy stage
+Three secrets to create in Harness first:
+
+splunk_oncall_api_id
+splunk_oncall_api_key
+splunk_oncall_username (a real user in your Splunk On-Call org — used as the author of the resolve action)
+The key ordering is baked in:
+
+Resolve incidents → 2. End maintenance mode (never the reverse)
+The when: pipelineStatus: All on the post-deploy stage means it runs even on a failed deploy — so you never get stranded in maintenance mode.
+
+Want me to also add a Slack/Teams notification step that posts a summary of how many incidents were auto-resolved after each deploy?
+
+
+Harness splunk oncall maintenance
+YAML
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+Harness splunk oncall maintenance · YAML
+Copy
+
+## ============================================================
+## Harness Pipeline: Splunk On-Call Maintenance Mode Automation
+## ============================================================
+##
+## WHAT THIS DOES:
+##   PRE-DEPLOY  → Starts a Splunk On-Call maintenance window via API
+##   DEPLOY      → Runs your existing deployment steps
+##   POST-DEPLOY → (1) Fetches open incidents started after deploy began
+##                 (2) Resolves those incidents
+##                 (3) Ends the maintenance window
+##
+## IMPORTANT: Incidents are resolved BEFORE ending maintenance mode.
+##   Ending maintenance mode first would immediately page on-call engineers
+##   for any still-open incidents. This order prevents that.
+##
+## REQUIRED HARNESS SECRETS (set before using this pipeline):
+##   splunk_oncall_api_id      → Your API ID  (Integrations → API in Splunk On-Call)
+##   splunk_oncall_api_key     → Your API Key
+##   splunk_oncall_username    → A valid Splunk On-Call user in your org (used for resolve authorship)
+##
+## REQUIRED EDITS before use (search for "CHANGE_ME"):
+##   1. connectorRef      → Your Harness connector for the deploy service
+##   2. routing key names → Your actual routing key(s) or switch to Global mode
+##   3. Deploy stage      → Replace placeholder steps with your real deploy steps
+## ============================================================
+
+pipeline:
+  name: Deploy with Splunk On-Call Maintenance
+  identifier: deploy_with_splunk_oncall_maintenance
+  projectIdentifier: CHANGE_ME_project
+  orgIdentifier: CHANGE_ME_org
+  description: >
+    Wraps deployments with automated Splunk On-Call maintenance mode management.
+    Starts a maintenance window before deploy, then resolves ghost alerts and
+    ends the window cleanly after deploy completes.
+  tags:
+    oncall: managed
+    maintenance: automated
+
+  variables:
+    ## Override these at runtime or set defaults here
+    - name: routing_keys
+      type: String
+      default: "CHANGE_ME_your_routing_key"
+      description: >
+        Comma-separated routing key(s) to mute during maintenance.
+        Leave empty ("") to trigger a GLOBAL maintenance mode (mutes everything).
+    - name: maintenance_purpose
+      type: String
+      default: "Harness automated deployment"
+      description: Label shown in the Splunk On-Call UI for this maintenance window.
+
+  stages:
+
+    ## ──────────────────────────────────────────────────────────
+    ## STAGE 1: Pre-Deploy — Start Maintenance Mode
+    ## ──────────────────────────────────────────────────────────
+    - stage:
+        name: Start Maintenance Mode
+        identifier: start_maintenance_mode
+        type: Custom
+        spec:
+          execution:
+            steps:
+
+              - step:
+                  name: Start Splunk On-Call Maintenance Mode
+                  identifier: start_maintenance_mode_api
+                  type: Http
+                  spec:
+                    method: POST
+                    url: https://api.victorops.com/api-public/v1/maintenancemode/start
+                    headers:
+                      - key: X-VO-Api-Id
+                        value: <+secrets.getValue("splunk_oncall_api_id")>
+                      - key: X-VO-Api-Key
+                        value: <+secrets.getValue("splunk_oncall_api_key")>
+                      - key: Content-Type
+                        value: application/json
+                    requestBody: |-
+                      {
+                        "purpose": "<+pipeline.variables.maintenance_purpose> | Pipeline: <+pipeline.name> | RunID: <+pipeline.executionId>",
+                        "type": "RoutingKeys",
+                        "names": ["<+pipeline.variables.routing_keys>"]
+                      }
+                    ## NOTE: For GLOBAL maintenance mode (mute everything), replace the body above with:
+                    ##   { "purpose": "...", "type": "Global", "names": [] }
+                    ##
+                    ## NOTE: For multiple routing keys, expand the names array:
+                    ##   "names": ["payments-team", "api-gateway", "auth-service"]
+                    assertion: <+httpResponseCode> == 200
+                    outputVariables:
+                      - name: maintenanceModeId
+                        value: <+json("activeInstances[0].instanceId")>
+                        type: String
+                  timeout: 30s
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Abort
+                  description: >
+                    Starts a Splunk On-Call maintenance window and captures the
+                    instanceId for use when ending the window post-deploy.
+
+    ## ──────────────────────────────────────────────────────────
+    ## STAGE 2: Deploy — Your Existing Deployment Logic
+    ## ──────────────────────────────────────────────────────────
+    - stage:
+        name: Deploy
+        identifier: deploy
+        type: Deployment
+        ## !! CHANGE_ME: Replace this entire stage spec with your real deployment.
+        ## This is a placeholder showing where your deploy steps live.
+        ## Your existing Harness pipeline's deploy stage goes here unchanged.
+        spec:
+          deploymentType: Kubernetes   ## CHANGE_ME: match your service type
+          service:
+            serviceRef: CHANGE_ME_service
+          environment:
+            environmentRef: CHANGE_ME_environment
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: CHANGE_ME_infra
+          execution:
+            steps:
+              - step:
+                  name: Deploy Service
+                  identifier: deploy_service
+                  type: K8sRollingDeploy   ## CHANGE_ME: match your deploy step type
+                  timeout: 10m
+                  spec:
+                    skipDryRun: false
+            rollbackSteps:
+              - step:
+                  name: Rollback
+                  identifier: rollback
+                  type: K8sRollingRollback
+                  timeout: 10m
+                  spec: {}
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+
+    ## ──────────────────────────────────────────────────────────
+    ## STAGE 3: Post-Deploy — Resolve Incidents + End Maintenance
+    ## ──────────────────────────────────────────────────────────
+    ## CRITICAL: This stage runs even if the Deploy stage failed.
+    ## You don't want to be stuck in maintenance mode on a failed deploy.
+    - stage:
+        name: End Maintenance Mode
+        identifier: end_maintenance_mode
+        type: Custom
+        ## Always run this stage regardless of prior stage outcome
+        when:
+          pipelineStatus: All
+        spec:
+          execution:
+            steps:
+
+              ## ── Step 1: Fetch open incidents that started after this pipeline began ──
+              - step:
+                  name: Get Open Incidents Since Deploy Started
+                  identifier: get_open_incidents
+                  type: Http
+                  spec:
+                    method: GET
+                    ## Uses the reporting API so we can filter by startedAfter timestamp.
+                    ## <+pipeline.startTs> is Harness's built-in pipeline start epoch (ms).
+                    ## We convert ms → ISO8601 seconds using a Harness expression.
+                    url: >-
+                      https://api.victorops.com/api-reporting/v1/incidents?currentPhase=triggered&startedAfter=<+pipeline.startTs>
+                    headers:
+                      - key: X-VO-Api-Id
+                        value: <+secrets.getValue("splunk_oncall_api_id")>
+                      - key: X-VO-Api-Key
+                        value: <+secrets.getValue("splunk_oncall_api_key")>
+                    assertion: <+httpResponseCode> == 200
+                    outputVariables:
+                      - name: openIncidentNumbers
+                        ## Extracts an array of incident numbers from the response.
+                        ## These are the only incidents we'll resolve — scoped to
+                        ## incidents that opened after this pipeline started.
+                        value: <+json("incidents[*].incidentNumber")>
+                        type: String
+                  timeout: 30s
+                  ## Don't abort the whole stage if this fails — still need to end maintenance
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Ignore
+                  description: >
+                    Fetches all triggered (open) incidents that started after this
+                    pipeline began. Scoped to avoid resolving pre-existing incidents
+                    owned by other teams.
+
+              ## ── Step 2: Resolve those open incidents ──
+              ## This runs BEFORE ending maintenance mode intentionally.
+              ## Ending maintenance mode first would cause immediate paging.
+              - step:
+                  name: Resolve Open Incidents From Maintenance Window
+                  identifier: resolve_open_incidents
+                  type: Http
+                  spec:
+                    method: PATCH
+                    url: https://api.victorops.com/api-public/v1/incidents/resolve
+                    headers:
+                      - key: X-VO-Api-Id
+                        value: <+secrets.getValue("splunk_oncall_api_id")>
+                      - key: X-VO-Api-Key
+                        value: <+secrets.getValue("splunk_oncall_api_key")>
+                      - key: Content-Type
+                        value: application/json
+                    requestBody: |-
+                      {
+                        "userName": "<+secrets.getValue("splunk_oncall_username")>",
+                        "incidentNames": <+execution.steps.get_open_incidents.output.outputVariables.openIncidentNumbers>,
+                        "message": "Auto-resolved by Harness post-deploy. Pipeline: <+pipeline.name> | RunID: <+pipeline.executionId>"
+                      }
+                    assertion: <+httpResponseCode> == 200
+                  timeout: 30s
+                  ## Don't abort on failure — still need to end maintenance mode
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Ignore
+                  description: >
+                    Resolves all open incidents that opened during this maintenance
+                    window. Must run before ending maintenance mode to prevent
+                    immediate paging on open incidents.
+
+              ## ── Step 3: End Maintenance Mode ──
+              ## Always runs last, even if resolve step failed.
+              - step:
+                  name: End Splunk On-Call Maintenance Mode
+                  identifier: end_maintenance_mode_api
+                  type: Http
+                  spec:
+                    method: PUT
+                    ## Uses the instanceId captured in the pre-deploy stage
+                    url: >-
+                      https://api.victorops.com/api-public/v1/maintenancemode/<+pipeline.stages.start_maintenance_mode.spec.execution.steps.start_maintenance_mode_api.output.outputVariables.maintenanceModeId>/end
+                    headers:
+                      - key: X-VO-Api-Id
+                        value: <+secrets.getValue("splunk_oncall_api_id")>
+                      - key: X-VO-Api-Key
+                        value: <+secrets.getValue("splunk_oncall_api_key")>
+                    assertion: <+httpResponseCode> == 200
+                  timeout: 30s
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: MarkAsFailure
+                  description: >
+                    Ends the maintenance window. Runs after incident resolution
+                    to avoid triggering pages on any remaining open incidents.
+
+## ============================================================
+## TROUBLESHOOTING NOTES
+## ============================================================
+##
+## "incidents[*].incidentNumber returns empty"
+##   → No open incidents during your window. That's fine — the resolve
+##     call will no-op gracefully with an empty array.
+##
+## "409 on start maintenance mode"
+##   → A global maintenance mode is already active in your org.
+##     You can only have one global mode at a time. Switch to
+##     routing-key-scoped mode, or end the existing global one first.
+##
+## "maintenanceModeId is null in end step"
+##   → The start step failed or the instanceId wasn't captured.
+##     Check the start step's output variables in the execution log.
+##
+## "I want to scope to multiple routing keys"
+##   → Edit the names array in the start step body:
+##     "names": ["payments", "api-gateway", "auth-service"]
+##
+## "I want to resolve ALL open incidents, not just ones from this window"
+##   → Replace the GET in step 1 with:
+##     GET https://api.victorops.com/api-public/v1/incidents
+##     (no query params — returns everything currently open org-wide)
+##     Use with caution in shared orgs.
+##
+## ============================================================
+
