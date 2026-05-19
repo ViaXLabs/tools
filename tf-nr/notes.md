@@ -803,4 +803,51 @@ newrelic_service_level sli_guid trap (issue #2633) https://github.com/newrelic/t
 Readme
 Document · MD
 
-Claude is AI and can make mistakes. Please double-check responses.
+## Claude is AI and can make mistakes. Please double-check responses.
+
+Good question — let me be precise about this because it matters.
+
+## The timeout is NOT what does the tagging
+
+The `timeouts { create = "5m" }` block doesn't tag anything. It just tells Terraform **how long to keep retrying** after `newrelic_entity_tags` has already written the tag and is waiting for NR's API to confirm it landed.
+
+The flow is:
+
+1. Resource gets created (destination, condition, etc.)
+2. `newrelic_entity_tags` writes the tag via NR API
+3. NR's entity catalog takes time to index it
+4. Terraform polls: "is the tag there yet?"
+5. Without timeout → fails after ~20s
+6. With timeout → keeps polling for up to 5 minutes, succeeds at ~70s
+
+So the timeout is just a **patience setting** on top of `newrelic_entity_tags`.
+
+---
+
+## Can they ALL be done the same way?
+
+**Almost — but alert policy breaks the pattern entirely**, and for a completely unrelated reason.
+
+| Resource                            | Can use `newrelic_entity_tags` + timeout? | Why                                                                                                                                                                |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `newrelic_nrql_alert_condition`     | ✅ Yes                                    | Exports `entity_guid` → pass it to `newrelic_entity_tags`                                                                                                          |
+| `newrelic_notification_destination` | ✅ Yes                                    | Exports `.guid` → pass it to `newrelic_entity_tags`, add timeout for catalog lag                                                                                   |
+| `newrelic_alert_policy`             | ❌ No                                     | **Does not export any GUID at all** — `newrelic_entity_tags` requires a GUID to even start. The timeout can't help when there's nothing to pass in the first place |
+
+The policy problem has nothing to do with catalog lag or timing. The Terraform resource simply never gives you the GUID. Even if you waited 10 minutes, you'd still have no GUID to hand to `newrelic_entity_tags`. That's why it needs the NerdGraph escape hatch — it's a completely different class of problem.
+
+---
+
+## The simple mental model
+
+```
+Does the resource export a GUID?
+        │
+       YES → newrelic_entity_tags + timeouts { create = "5m" }  ✅
+        │
+        NO → NerdGraph via Python (look up the GUID yourself)   ⚠️
+        │
+  (alert policy is the only one in this module that falls here)
+```
+
+So: same pattern for conditions and destinations — yes. Alert policy — fundamentally different, no shortcut available.
