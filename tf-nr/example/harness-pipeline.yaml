@@ -1,0 +1,398 @@
+# =============================================================================
+# Harness Pipeline — New Relic Team Alerting
+#
+# MATRIX: team × environment — each cell = one isolated workspace per stack
+# Workspace naming: {team}-{environment}  e.g. "team-a-nonprod"
+#
+# STAGE ORDER
+#   Stage 1 (parallel): destinations + policies   — no inter-stack deps
+#   Stage 2 (parallel): conditions + rds-conditions — depend on policies
+#   Stage 3:            workflows                  — depends on destinations
+#
+# IMAGES
+#   Stages with NerdGraph tagging (policies, workflows) use a combined
+#   python+terraform image so both tools are available in one container.
+#   Other stages use hashicorp/terraform:1.8.
+#
+# SECRETS (configure in Harness Secrets Manager)
+#   nr_account_id   New Relic account ID
+#   nr_api_key      New Relic User API key (NRAK-...)
+#   aws_access_key  AWS access key for S3 state backend
+#   aws_secret_key  AWS secret key for S3 state backend
+# =============================================================================
+
+pipeline:
+  name: newrelic-team-alerting
+  identifier: newrelic_team_alerting
+  projectIdentifier: <+project.identifier>
+  orgIdentifier: <+org.identifier>
+
+  variables:
+    - name: tf_state_bucket
+      type: String
+      default: "your-tf-state-bucket"
+    - name: tf_state_region
+      type: String
+      default: "us-east-1"
+    - name: nr_region
+      type: String
+      default: "US"
+
+  stages:
+
+    # =========================================================================
+    # STAGE 1A — destinations (no deps, parallel with policies)
+    # Uses plain terraform image — no NerdGraph tagging in this stack
+    # (destinations are tagged via newrelic_entity_tags inside Terraform)
+    # =========================================================================
+    - stage:
+        name: destinations
+        identifier: destinations
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: harness-delegate
+
+          strategy:
+            matrix:
+              team:        <+input>   # e.g. ["team-a", "team-b"]
+              environment: <+input>   # e.g. ["nonprod", "prod"]
+
+          execution:
+            steps:
+              - step:
+                  name: tf_init_workspace_apply
+                  identifier: tf_destinations
+                  type: Run
+                  spec:
+                    image: hashicorp/terraform:1.8
+                    command: |
+                      set -e
+                      cd stacks/destinations
+
+                      terraform init \
+                        -backend-config="bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -backend-config="region=<+pipeline.variables.tf_state_region>" \
+                        -backend-config="dynamodb_table=terraform-state-lock"
+
+                      WORKSPACE="<+matrix.team>-<+matrix.environment>"
+                      terraform workspace select "$WORKSPACE" 2>/dev/null \
+                        || terraform workspace new "$WORKSPACE"
+                      echo "Workspace: $(terraform workspace show)"
+
+                      terraform apply -auto-approve \
+                        -var="newrelic_account_id=$NR_ACCOUNT_ID" \
+                        -var="newrelic_api_key=$NR_API_KEY" \
+                        -var="newrelic_region=<+pipeline.variables.nr_region>" \
+                        -var="team=<+matrix.team>" \
+                        -var="environment=<+matrix.environment>" \
+                        -var-file="../../envs/<+matrix.team>-<+matrix.environment>.tfvars"
+
+                      echo "=== Outputs ==="
+                      terraform output
+                    envVariables:
+                      AWS_ACCESS_KEY_ID:     <+secrets.getValue("aws_access_key")>
+                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_key")>
+                      NR_ACCOUNT_ID:         <+secrets.getValue("nr_account_id")>
+                      NR_API_KEY:            <+secrets.getValue("nr_api_key")>
+
+    # =========================================================================
+    # STAGE 1B — policies (no deps, parallel with destinations)
+    # Uses combined python+terraform image — null_resource runs Python NerdGraph
+    # tagging for the alert policy (which has no entity_guid in TF provider)
+    # =========================================================================
+    - stage:
+        name: policies
+        identifier: policies
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: harness-delegate
+
+          strategy:
+            matrix:
+              team:        <+input>
+              environment: <+input>
+
+          execution:
+            steps:
+              - step:
+                  name: setup
+                  identifier: setup_policies
+                  type: Run
+                  spec:
+                    # Install terraform into python image so both tools available
+                    image: python:3.12-slim
+                    command: |
+                      set -e
+                      pip install requests -q
+                      apt-get update -qq && apt-get install -y -qq curl unzip ca-certificates
+                      TF_VERSION="1.8.0"
+                      curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+                      unzip -q /tmp/tf.zip -d /usr/local/bin/
+                      terraform version
+                    envVariables:
+                      DEBIAN_FRONTEND: noninteractive
+
+              - step:
+                  name: tf_init_workspace_apply
+                  identifier: tf_policies
+                  type: Run
+                  spec:
+                    image: python:3.12-slim
+                    command: |
+                      set -e
+                      cd stacks/policies
+
+                      terraform init \
+                        -backend-config="bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -backend-config="region=<+pipeline.variables.tf_state_region>" \
+                        -backend-config="dynamodb_table=terraform-state-lock"
+
+                      WORKSPACE="<+matrix.team>-<+matrix.environment>"
+                      terraform workspace select "$WORKSPACE" 2>/dev/null \
+                        || terraform workspace new "$WORKSPACE"
+                      echo "Workspace: $(terraform workspace show)"
+
+                      # apply — null_resource local-exec will call nr_tag_resources.py
+                      # NR_TEAM / NR_ENVIRONMENT / NR_API_KEY are in env for the script
+                      terraform apply -auto-approve \
+                        -var="newrelic_account_id=$NR_ACCOUNT_ID" \
+                        -var="newrelic_api_key=$NR_API_KEY" \
+                        -var="newrelic_region=<+pipeline.variables.nr_region>" \
+                        -var="team=<+matrix.team>" \
+                        -var="environment=<+matrix.environment>" \
+                        -var-file="../../envs/<+matrix.team>-<+matrix.environment>.tfvars"
+
+                      echo "=== Outputs (includes tags_applied) ==="
+                      terraform output
+                    envVariables:
+                      AWS_ACCESS_KEY_ID:     <+secrets.getValue("aws_access_key")>
+                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_key")>
+                      NR_ACCOUNT_ID:         <+secrets.getValue("nr_account_id")>
+                      NR_API_KEY:            <+secrets.getValue("nr_api_key")>
+                      NR_TEAM:               <+matrix.team>
+                      NR_ENVIRONMENT:        <+matrix.environment>
+                      NR_REGION:             <+pipeline.variables.nr_region>
+
+    # =========================================================================
+    # STAGE 2A — conditions (depends on policies completing successfully)
+    # =========================================================================
+    - stage:
+        name: conditions
+        identifier: conditions
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: harness-delegate
+
+          strategy:
+            matrix:
+              team:        <+input>
+              environment: <+input>
+
+          execution:
+            steps:
+              - step:
+                  name: tf_init_workspace_apply
+                  identifier: tf_conditions
+                  type: Run
+                  spec:
+                    image: hashicorp/terraform:1.8
+                    command: |
+                      set -e
+                      cd stacks/conditions
+
+                      terraform init \
+                        -backend-config="bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -backend-config="region=<+pipeline.variables.tf_state_region>" \
+                        -backend-config="dynamodb_table=terraform-state-lock"
+
+                      WORKSPACE="<+matrix.team>-<+matrix.environment>"
+                      terraform workspace select "$WORKSPACE" 2>/dev/null \
+                        || terraform workspace new "$WORKSPACE"
+
+                      terraform apply -auto-approve \
+                        -var="newrelic_account_id=$NR_ACCOUNT_ID" \
+                        -var="newrelic_api_key=$NR_API_KEY" \
+                        -var="newrelic_region=<+pipeline.variables.nr_region>" \
+                        -var="team=<+matrix.team>" \
+                        -var="environment=<+matrix.environment>" \
+                        -var="state_bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -var="state_region=<+pipeline.variables.tf_state_region>" \
+                        -var-file="../../envs/<+matrix.team>-<+matrix.environment>.tfvars"
+
+                      echo "=== Outputs (includes tags_applied) ==="
+                      terraform output
+                    envVariables:
+                      AWS_ACCESS_KEY_ID:     <+secrets.getValue("aws_access_key")>
+                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_key")>
+                      NR_ACCOUNT_ID:         <+secrets.getValue("nr_account_id")>
+                      NR_API_KEY:            <+secrets.getValue("nr_api_key")>
+
+        # Correct Harness JEXL syntax for stage dependency
+        when:
+          pipelineStatus: Success
+          condition: <+pipeline.stages.policies.status> == "Succeeded"
+
+    # =========================================================================
+    # STAGE 2B — rds-conditions (depends on policies, parallel with conditions)
+    # =========================================================================
+    - stage:
+        name: rds_conditions
+        identifier: rds_conditions
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: harness-delegate
+
+          strategy:
+            matrix:
+              team:        <+input>
+              environment: <+input>
+
+          execution:
+            steps:
+              - step:
+                  name: tf_init_workspace_apply
+                  identifier: tf_rds
+                  type: Run
+                  spec:
+                    image: hashicorp/terraform:1.8
+                    command: |
+                      set -e
+                      cd stacks/rds-conditions
+
+                      terraform init \
+                        -backend-config="bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -backend-config="region=<+pipeline.variables.tf_state_region>" \
+                        -backend-config="dynamodb_table=terraform-state-lock"
+
+                      WORKSPACE="<+matrix.team>-<+matrix.environment>"
+                      terraform workspace select "$WORKSPACE" 2>/dev/null \
+                        || terraform workspace new "$WORKSPACE"
+
+                      terraform apply -auto-approve \
+                        -var="newrelic_account_id=$NR_ACCOUNT_ID" \
+                        -var="newrelic_api_key=$NR_API_KEY" \
+                        -var="newrelic_region=<+pipeline.variables.nr_region>" \
+                        -var="team=<+matrix.team>" \
+                        -var="environment=<+matrix.environment>" \
+                        -var="state_bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -var="state_region=<+pipeline.variables.tf_state_region>" \
+                        -var-file="../../envs/<+matrix.team>-<+matrix.environment>.tfvars"
+
+                      echo "=== Outputs (includes tags_applied) ==="
+                      terraform output
+                    envVariables:
+                      AWS_ACCESS_KEY_ID:     <+secrets.getValue("aws_access_key")>
+                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_key")>
+                      NR_ACCOUNT_ID:         <+secrets.getValue("nr_account_id")>
+                      NR_API_KEY:            <+secrets.getValue("nr_api_key")>
+
+        when:
+          pipelineStatus: Success
+          condition: <+pipeline.stages.policies.status> == "Succeeded"
+
+    # =========================================================================
+    # STAGE 3 — workflows
+    # Depends on destinations (for channel_id remote state read)
+    # Uses python+terraform image — null_resource runs NerdGraph tagging
+    # for the workflow entity (which also has no entity_guid in TF provider)
+    # =========================================================================
+    - stage:
+        name: workflows
+        identifier: workflows
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: <+input>
+              namespace: harness-delegate
+
+          strategy:
+            matrix:
+              team:        <+input>
+              environment: <+input>
+
+          execution:
+            steps:
+              - step:
+                  name: setup
+                  identifier: setup_workflows
+                  type: Run
+                  spec:
+                    image: python:3.12-slim
+                    command: |
+                      set -e
+                      pip install requests -q
+                      apt-get update -qq && apt-get install -y -qq curl unzip ca-certificates
+                      TF_VERSION="1.8.0"
+                      curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+                      unzip -q /tmp/tf.zip -d /usr/local/bin/
+                    envVariables:
+                      DEBIAN_FRONTEND: noninteractive
+
+              - step:
+                  name: tf_init_workspace_apply
+                  identifier: tf_workflows
+                  type: Run
+                  spec:
+                    image: python:3.12-slim
+                    command: |
+                      set -e
+                      cd stacks/workflows
+
+                      terraform init \
+                        -backend-config="bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -backend-config="region=<+pipeline.variables.tf_state_region>" \
+                        -backend-config="dynamodb_table=terraform-state-lock"
+
+                      WORKSPACE="<+matrix.team>-<+matrix.environment>"
+                      terraform workspace select "$WORKSPACE" 2>/dev/null \
+                        || terraform workspace new "$WORKSPACE"
+
+                      terraform apply -auto-approve \
+                        -var="newrelic_account_id=$NR_ACCOUNT_ID" \
+                        -var="newrelic_api_key=$NR_API_KEY" \
+                        -var="newrelic_region=<+pipeline.variables.nr_region>" \
+                        -var="team=<+matrix.team>" \
+                        -var="environment=<+matrix.environment>" \
+                        -var="state_bucket=<+pipeline.variables.tf_state_bucket>" \
+                        -var="state_region=<+pipeline.variables.tf_state_region>" \
+                        -var-file="../../envs/<+matrix.team>-<+matrix.environment>.tfvars"
+
+                      echo "=== Outputs (includes tags_applied) ==="
+                      terraform output
+                    envVariables:
+                      AWS_ACCESS_KEY_ID:     <+secrets.getValue("aws_access_key")>
+                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_key")>
+                      NR_ACCOUNT_ID:         <+secrets.getValue("nr_account_id")>
+                      NR_API_KEY:            <+secrets.getValue("nr_api_key")>
+                      NR_TEAM:               <+matrix.team>
+                      NR_ENVIRONMENT:        <+matrix.environment>
+                      NR_REGION:             <+pipeline.variables.nr_region>
+
+        when:
+          pipelineStatus: Success
+          condition: |
+            <+pipeline.stages.destinations.status> == "Succeeded" &&
+            <+pipeline.stages.conditions.status> == "Succeeded"
