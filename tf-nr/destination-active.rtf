@@ -30,3 +30,75 @@ output "is_active" {
 So if you're using the data source to look up an existing destination and wire it to a channel, you can **read** `active` to check its state, but you can't set it — you'd need the resource block to control it.
 
 The docs list `active` under "Attributes Reference" for the data source, meaning it's purely an output, whereas on the resource it's a full argument you can set to `true` or `false`.
+
+
+
+
+---
+
+Yes, exactly! You can toggle a destination on/off just by changing `active` and running `terraform apply`. Here's a clean module pattern for it:
+
+**Module structure:**
+```hcl
+# modules/newrelic-destination/main.tf
+resource "newrelic_notification_destination" "this" {
+  name   = var.name
+  type   = var.type
+  active = var.active    # <-- the toggle
+
+  property {
+    key   = var.property_key
+    value = var.property_value
+  }
+}
+```
+
+```hcl
+# modules/newrelic-destination/variables.tf
+variable "name" {}
+variable "type" {}
+variable "property_key" {}
+variable "property_value" {}
+
+variable "active" {
+  type    = bool
+  default = true    # enabled by default
+}
+```
+
+**Calling the module:**
+```hcl
+module "my_destination" {
+  source = "./modules/newrelic-destination"
+
+  name           = "my-email-destination"
+  type           = "EMAIL"
+  property_key   = "email"
+  property_value = "alerts@example.com"
+
+  active = false   # just flip this true/false and re-apply
+}
+```
+
+**The workflow is simple:**
+
+- Want to **disable** it? Set `active = false` → `terraform apply`
+- Want to **re-enable** it? Set `active = true` → `terraform apply`
+
+Terraform will just do an **in-place update** (no destroy/recreate), so it's a lightweight change. You can even drive it from a `tfvars` file or CI/CD variable so you never have to touch the module code itself:
+
+```hcl
+# terraform.tfvars
+destination_active = false
+```
+
+```hcl
+# root main.tf
+module "my_destination" {
+  source = "./modules/newrelic-destination"
+  ...
+  active = var.destination_active
+}
+```
+
+That way flipping an alert destination on or off in production is just a variable change + apply.
