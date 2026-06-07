@@ -1,0 +1,32 @@
+Based on the docs you shared, `active` is actually an **exported attribute** (read-only) on the data source — not a configurable argument you can set when looking up an existing destination.
+
+Here's how it works in each context:
+
+**On the `resource` (newrelic_notification_destination)** — `active` is a configurable argument:
+```hcl
+resource "newrelic_notification_destination" "example" {
+  name   = "my-destination"
+  type   = "EMAIL"
+  active = false  # you control this
+
+  property {
+    key   = "email"
+    value = "alerts@example.com"
+  }
+}
+```
+
+**On the `data source` (newrelic_notification_destination)** — `active` is read-only output you can reference:
+```hcl
+data "newrelic_notification_destination" "foo" {
+  name = "my-destination"
+}
+
+output "is_active" {
+  value = data.newrelic_notification_destination.foo.active
+}
+```
+
+So if you're using the data source to look up an existing destination and wire it to a channel, you can **read** `active` to check its state, but you can't set it — you'd need the resource block to control it.
+
+The docs list `active` under "Attributes Reference" for the data source, meaning it's purely an output, whereas on the resource it's a full argument you can set to `true` or `false`.
