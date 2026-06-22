@@ -1,0 +1,17 @@
+# repo_scan tool — files that must never be committed
+# =====================================================
+
+# All scan output folders
+repo_scans/
+
+# Any stray map files (contain original sensitive values)
+*_map.json
+
+# Any stray flat files (unscanned)
+*_flat.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

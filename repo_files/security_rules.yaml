@@ -1,0 +1,348 @@
+# =============================================================================
+# security_rules.yaml — Security Scrubber Rule Book
+# =============================================================================
+#
+# HOW TOKENS WORK
+# ---------------
+# Each matched value gets a unique token:  [SSN-0001], [EMAIL-0003], etc.
+# The *_map.json records every token → original value.
+# After your gov chatbot responds, run security_revert.py to restore values.
+#
+# EDITING RULES
+# -------------
+# enabled: false    — skip this rule entirely
+# suggest_only: true  — flag in report but do NOT auto-substitute
+# suggest_only: false — auto-substitute with a reversible token
+# keep_label: true    — for key=value, keep "key=" and token only the value
+# luhn_check: true    — only fire on credit card numbers that pass Luhn
+# multiline: true     — pattern spans multiple lines (e.g. PEM blocks)
+#
+# TOKEN FORMAT:  [RULENAME-NNNN]   e.g. [SSN-0003]
+#
+# ADD A CUSTOM RULE: copy the template block at the bottom.
+# =============================================================================
+
+rules:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PII — Personally Identifiable Information
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: SSN
+    category: PII
+    description: US Social Security Number  (###-##-####)
+    pattern: '\b(?!000|666|9\d{2})\d{3}([\-\ ])(?!00)\d{2}\1(?!0000)\d{4}\b'
+    enabled: true
+    suggest_only: false
+    notes: 'Validates separator consistency and excludes invalid SSN ranges.'
+
+  - name: EMAIL
+    category: PII
+    description: Email addresses
+    pattern: '\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: PHONE
+    category: PII
+    description: US phone numbers — (555) 867-5309 / 555.867.5309 / +1-555-867-5309
+    pattern: '\b(?:\+1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]\d{4}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: CC
+    category: PII
+    description: Credit/debit card numbers — Visa, MC, Amex, Discover (Luhn validated)
+    pattern: '\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b'
+    enabled: true
+    suggest_only: false
+    luhn_check: true
+    notes: 'Luhn algorithm applied — only real card numbers are tokenised.'
+
+  - name: DOB
+    category: PII
+    description: Date of birth values following a dob / birthday label
+    pattern: '(?i)(?:dob|date[\s_\-]of[\s_\-]birth|birth[\s_\-]?date)\s*[=:\s]\s*\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}'
+    enabled: true
+    suggest_only: false
+
+  - name: ADDRESS
+    category: PII
+    description: US street addresses  (123 Main Street)
+    pattern: '\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Place|Pl|Way|Circle|Cir)(?:\.|\b)'
+    enabled: true
+    suggest_only: true
+    notes: 'suggest_only — address regex has higher false-positive rate. Review hits before enabling.'
+
+  - name: NAME_IN_CODE
+    category: PII
+    description: Full names next to name field labels  (first_name=John Smith)
+    pattern: '(?i)(?:full[\s_]?name|first[\s_]?name|last[\s_]?name|fname|lname)\s*[=:]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+'
+    enabled: true
+    suggest_only: false
+    keep_label: true
+
+  - name: EIN
+    category: PII
+    description: US Employer Identification Numbers  (##-#######)
+    pattern: '\b\d{2}-\d{7}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: PASSPORT
+    category: PII
+    description: US passport numbers
+    pattern: '\b[A-Z]{1,2}[0-9]{6,9}\b'
+    enabled: false
+    suggest_only: true
+    notes: 'Disabled — high false-positive rate. Enable deliberately if repo may contain passport data.'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # KEYS — API keys, access tokens, platform credentials
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: AWS_KEY
+    category: KEYS
+    description: AWS access key ID  (AKIA/ASIA/AROA prefix)
+    pattern: '\b(AKIA|ASIA|AROA|AIDA|ANPA|ANVA|AIPA)[A-Z0-9]{16}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: AWS_SECRET
+    category: KEYS
+    description: AWS secret access key assignment
+    pattern: '(?i)(aws[_\-\s]?secret[_\-\s]?(?:access[_\-\s]?)?key\s*[=:]\s*)([A-Za-z0-9+/]{40})'
+    enabled: true
+    suggest_only: false
+    keep_label: true
+
+  - name: GITHUB_TOKEN
+    category: KEYS
+    description: GitHub personal access tokens  (ghp_ / github_pat_)
+    pattern: '\b(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,255}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: GOOGLE_KEY
+    category: KEYS
+    description: Google API keys  (AIza prefix)
+    pattern: '\bAIza[A-Za-z0-9_\-]{35}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: STRIPE_KEY
+    category: KEYS
+    description: Stripe publishable or secret keys
+    pattern: '\b(sk|pk)_(test|live)_[A-Za-z0-9]{20,}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: SLACK_TOKEN
+    category: KEYS
+    description: Slack API tokens  (xoxb- / xoxa- / xoxp-)
+    pattern: '\bxox[baprs]\-[A-Za-z0-9\-]{10,}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: TWILIO_SID
+    category: KEYS
+    description: Twilio Account SIDs  (ACxxxxxxxx...)
+    pattern: '\bAC[a-f0-9]{32}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: SENDGRID_KEY
+    category: KEYS
+    description: SendGrid API keys
+    pattern: '\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: MAILGUN_KEY
+    category: KEYS
+    description: Mailgun API keys
+    pattern: '\bkey-[a-f0-9]{32}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: NPM_TOKEN
+    category: KEYS
+    description: npm authentication tokens
+    pattern: '\bnpm_[A-Za-z0-9]{36}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: PYPI_TOKEN
+    category: KEYS
+    description: PyPI API tokens
+    pattern: '\bpypi-[A-Za-z0-9_\-]{40,}\b'
+    enabled: true
+    suggest_only: false
+
+  - name: JWT
+    category: KEYS
+    description: JSON Web Tokens  (three base64url segments)
+    pattern: '\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b'
+    enabled: true
+    suggest_only: false
+
+  - name: BEARER
+    category: KEYS
+    description: HTTP Authorization Bearer tokens
+    pattern: '(?i)(bearer\s+)([A-Za-z0-9\-_\.=+/]{20,})'
+    enabled: true
+    suggest_only: false
+    keep_label: true
+
+  - name: OAUTH_TOKEN
+    category: KEYS
+    description: OAuth / refresh token assignments
+    pattern: '(?i)((?:oauth|refresh)[_\-\s]?token\s*[=:]\s*)([A-Za-z0-9\-_\.=+/]{20,})'
+    enabled: true
+    suggest_only: false
+    keep_label: true
+
+  - name: AZURE_KEY
+    category: KEYS
+    description: Azure storage/service keys  (base64, 88 chars)
+    pattern: '[A-Za-z0-9+/]{86}=='
+    enabled: true
+    suggest_only: true
+    notes: 'suggest_only — base64 pattern can match non-secret data. Review hits.'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SECRETS — Passwords and credentials in config / code
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: PASSWORD
+    category: SECRETS
+    description: password= / passwd= / pwd= style assignments
+    pattern: "(?i)((?:password|passwd|pwd|pass)\\s*[=:]\\s*)(['\"]?[A-Za-z0-9!@#$%^&*()\\-_=+{}\\[\\]:;<>,.?/\\\\|~`]{6,}['\"]?)"
+    enabled: true
+    suggest_only: false
+    keep_label: true
+    notes: 'Keeps the label, tokens the value. Works in .env, YAML, JSON, Python, etc.'
+
+  - name: SECRET
+    category: SECRETS
+    description: secret= / secret_key= / api_key= / access_token= / client_secret= assignments
+    pattern: "(?i)((?:secret[_\\-]?(?:key|token|value)?|api[_\\-]?key|apikey|access[_\\-]?token|auth[_\\-]?token|client[_\\-]?secret|encryption[_\\-]?key|signing[_\\-]?key)\\s*[=:]\\s*)(['\"]?[A-Za-z0-9+/=_\\-\\.!@#$%^&*]{8,}['\"]?)"
+    enabled: true
+    suggest_only: false
+    keep_label: true
+
+  - name: CONN_STR
+    category: SECRETS
+    description: Database connection strings with embedded user:password
+    pattern: '(?i)(?:mongodb|postgres|postgresql|mysql|mssql|redis|amqp|jdbc|mariadb)\:\/\/[A-Za-z0-9\-_\.%]+:[A-Za-z0-9\-_\.%!@#$%^&*]+@[A-Za-z0-9\.\-]+'
+    enabled: true
+    suggest_only: false
+
+  - name: BASIC_AUTH_URL
+    category: SECRETS
+    description: HTTP/S URLs with embedded username:password@host
+    pattern: 'https?:\/\/[A-Za-z0-9\-_\.%]+:[A-Za-z0-9\-_\.%!@#$%^&*]+@[A-Za-z0-9\.\-]+'
+    enabled: true
+    suggest_only: false
+
+  - name: PRIVATE_KEY
+    category: SECRETS
+    description: PEM private key blocks  (RSA, EC, DSA, OpenSSH)
+    pattern: '-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+    enabled: true
+    suggest_only: false
+    multiline: true
+
+  - name: CERTIFICATE
+    category: SECRETS
+    description: PEM certificate blocks
+    pattern: '-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----'
+    enabled: false
+    suggest_only: true
+    multiline: true
+    notes: 'Public certs not usually sensitive but flagged for review.'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CREDS — Stored / embedded login credentials
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: HTPASSWD
+    category: CREDS
+    description: htpasswd-style username:hash lines
+    pattern: '^[A-Za-z0-9_\-\.]+:\$(?:apr1|2y|5|6)\$[A-Za-z0-9./]+\$[A-Za-z0-9./]+'
+    enabled: true
+    suggest_only: false
+
+  - name: PRIVATE_IP
+    category: CREDS
+    description: Private IPv4 addresses  (10.x / 172.16-31.x / 192.168.x)
+    pattern: '\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'
+    enabled: true
+    suggest_only: true
+    notes: 'suggest_only — private IPs may be intentional config. Review before enabling auto-token.'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # IAC — Infrastructure as Code secrets
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: TF_SECRET
+    category: IAC
+    description: Terraform variable names that look sensitive
+    pattern: "(?i)(?:variable|local)\\s+[\"'][A-Za-z0-9_\\-]*(?:secret|key|password|token|credential)[A-Za-z0-9_\\-]*[\"']" 
+    enabled: true
+    suggest_only: true
+    notes: 'suggest_only — flags sensitive Terraform variable names for review.'
+
+  - name: ANSIBLE_VAULT
+    category: IAC
+    description: Ansible inline vault-encrypted strings
+    pattern: '!\s*vault\s*\|\s*\$ANSIBLE_VAULT[^\n]+'
+    enabled: true
+    suggest_only: false
+
+  - name: DOCKER_SECRET
+    category: IAC
+    description: Dockerfile ENV/ARG lines with secret-looking values
+    pattern: '(?i)^(ENV|ARG)\s+([A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD)[A-Za-z0-9_]*)\s*[=]?\s*([A-Za-z0-9+/=_\-!@#$%^&*]{8,})'
+    enabled: true
+    suggest_only: false
+    keep_label: true
+
+  - name: GIT_CREDENTIAL
+    category: IAC
+    description: Git credential helper stored passwords
+    pattern: '(?i)url=https://[A-Za-z0-9_\.\-]+:[A-Za-z0-9_\.\-!@#$%^&*]+@'
+    enabled: true
+    suggest_only: false
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # NETWORK
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: INTERNAL_HOST
+    category: NETWORK
+    description: Internal hostnames  (.internal / .local / .corp / .lan)
+    pattern: '\b[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.(?:internal|local|corp|lan|intranet)\b'
+    enabled: true
+    suggest_only: true
+    notes: 'suggest_only — internal hostnames may be intentional. Review before enabling.'
+
+  - name: PUBLIC_IP
+    category: NETWORK
+    description: Any public IPv4 address
+    pattern: '\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'
+    enabled: false
+    suggest_only: true
+    notes: 'Disabled — catches everything including 0.0.0.0. Enable deliberately.'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CUSTOM — Add your own rules here
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # - name: CUSTOM_01
+  #   category: CUSTOM
+  #   description: What this catches
+  #   pattern: 'your-regex-here'
+  #   enabled: true
+  #   suggest_only: false
+  #   notes: 'Why this rule exists.'
