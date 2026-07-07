@@ -1,0 +1,167 @@
+Good — that confirms it's propagation, so let's build the whole chain in the right order. Here's the full stack, dependency-safe:
+
+```hcl
+# --- 1. KMS key ---
+resource "aws_kms_key" "firehose" {
+  description             = "Firehose SSE key for New Relic stream"
+  deletion_window_in_days = 7
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableRootAccount"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowFirehoseRole"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.firehose.arn }
+        Action = [
+          "kms:GenerateDataKey",
+          "kms:Decrypt",
+          "kms:DescribeKey",
+          "kms:CreateGrant"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+data "aws_caller_identity" "current" {}
+
+# --- 2. IAM role for Firehose ---
+resource "aws_iam_role" "firehose" {
+  name = "firehose-newrelic-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "firehose.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# --- 3. IAM policy granting KMS access (depends on both role and key existing) ---
+resource "aws_iam_role_policy" "firehose_kms" {
+  name = "firehose-kms-access"
+  role = aws_iam_role.firehose.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:GenerateDataKey",
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:CreateGrant"
+      ]
+      Resource = aws_kms_key.firehose.arn
+    }]
+  })
+
+  depends_on = [aws_kms_key.firehose]
+}
+
+# --- 4. S3 role policy (backup bucket) — Firehose needs this regardless of KMS ---
+resource "aws_iam_role_policy" "firehose_s3" {
+  name = "firehose-s3-access"
+  role = aws_iam_role.firehose.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:AbortMultipartUpload",
+        "s3:GetBucketLocation",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads",
+        "s3:PutObject"
+      ]
+      Resource = [
+        aws_s3_bucket.backup.arn,
+        "${aws_s3_bucket.backup.arn}/*"
+      ]
+    }]
+  })
+}
+
+# --- 5. Force a real wait for IAM/KMS propagation before Firehose touches the key ---
+resource "time_sleep" "wait_for_kms_propagation" {
+  depends_on      = [aws_iam_role_policy.firehose_kms, aws_iam_role_policy.firehose_s3]
+  create_duration = "30s"
+}
+
+# --- 6. Backup bucket ---
+resource "aws_s3_bucket" "backup" {
+  bucket_prefix = "firehose-newrelic-backup-"
+}
+
+# --- 7. The delivery stream itself — depends on the sleep, not directly on the policies ---
+resource "aws_kinesis_firehose_delivery_stream" "to_newrelic" {
+  name        = "newrelic-stream"
+  destination = "http_endpoint"
+
+  server_side_encryption {
+    enabled  = true
+    key_type = "CUSTOMER_MANAGED_CMK"
+    key_arn  = aws_kms_key.firehose.arn
+  }
+
+  http_endpoint_configuration {
+    url            = "https://aws-api.newrelic.com/firehose/v1"
+    name           = "New Relic"
+    access_key     = var.newrelic_api_key
+    role_arn       = aws_iam_role.firehose.arn
+    s3_backup_mode = "FailedDataOnly"
+
+    buffering_size     = 5
+    buffering_interval = 300
+
+    s3_configuration {
+      role_arn            = aws_iam_role.firehose.arn
+      bucket_arn          = aws_s3_bucket.backup.arn
+      buffering_size      = 10
+      buffering_interval  = 400
+      compression_format  = "GZIP"
+    }
+
+    request_configuration {
+      content_encoding = "GZIP"
+    }
+  }
+
+  depends_on = [time_sleep.wait_for_kms_propagation]
+}
+```
+
+Need this in your `required_providers`:
+
+```hcl
+terraform {
+  required_providers {
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.11"
+    }
+  }
+}
+```
+
+A couple of practical notes for the destroy/recreate cycle specifically:
+
+- **On destroy**, the KMS key doesn't actually disappear immediately — it goes into the 7-day pending-deletion window (`deletion_window_in_days`). If you destroy and recreate fast in testing, you'll get a *new* key with a *different* ARN each time, which is fine, but don't expect the old key to be gone — it just becomes unusable and sits there deleting.
+- 30 seconds is a reasonable starting guess for IAM/KMS propagation, not a guarantee. If you still get the silent-failure symptom, bump it to 60s before assuming something else is wrong — this delay is the one part of this whole setup I can't verify a hard number for, since AWS doesn't publish a propagation SLA.
+- After you apply, the fastest way to confirm KMS is actually the problem (versus something else) is CloudWatch: Firehose exposes `KMS.AccessDenied`-type error counts as delivery stream metrics — Firehose provides four CloudWatch metrics to track the four AWS KMS exceptions. If those are nonzero right after a fresh apply, that's your propagation race confirmed in the data, not just in theory.
+
+Try the apply with this and see if the stream shows up in New Relic. If it still doesn't, the CloudWatch KMS metrics are the next thing to check.
+Try the apply with this and see if the stream shows up in New Relic. If it still doesn't, the CloudWatch KMS metrics are the next thing to check.
