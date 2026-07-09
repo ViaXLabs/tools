@@ -1,0 +1,16 @@
+# Copy this to terraform.tfvars (which should be in .gitignore) and fill in
+# real values. Never commit real secrets.
+
+aws_region       = "us-east-1"
+name_prefix      = "newrelic-firehose"
+
+# New Relic account settings
+newrelic_account_id       = "REPLACE_ME"        # numeric NR account ID
+newrelic_account_region   = "US"                # "US" or "EU"
+newrelic_provider_api_key = "REPLACE_ME"        # NRAK-... User API key, for the Terraform provider only
+
+# Optional: restrict the metric stream to specific namespaces.
+# include_metric_filters = {
+#   "AWS/EC2"    = []
+#   "AWS/Lambda" = []
+# }
