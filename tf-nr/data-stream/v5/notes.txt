@@ -1,0 +1,33 @@
+This is a real, specific symptom, and it's actually a very useful one: **works with no KMS, works for a while with KMS, then silently stops with nothing in the logs.** That pattern points at something failing asynchronously on the KMS side that our current logging doesn't capture — the `cloudwatch_logging_options` we set up only logs *delivery* failures (HTTP endpoint / S3), not internal encryption failures. Let me verify exactly where Firehose surfaces SSE/KMS problems, since "check CloudWatch logs" clearly isn't the whole story here.Found the exact mechanism. Confirmed via AWS's own docs: **Firehose has four dedicated CloudWatch metrics for KMS failures — `KMSKeyAccessDenied`, `KMSKeyDisabled`, `KMSKeyInvalidState`, `KMSKeyNotFound`** (namespace `AWS/Firehose`) — and when one of these fires, Firehose doesn't throw a hard error. It just quietly stops making forward progress and waits up to 24 hours for you to resolve the problem before discarding the affected records. That's exactly your symptom: no crash, no log entry (our `cloudwatch_logging_options` only cover HTTP-endpoint/S3 *delivery* failures, not this internal encryption path) — just a quiet stall. "No logs" doesn't mean nothing's wrong; it means you were checking the one place this specific failure doesn't show up.
+
+There's also a distinct, checkable field: `describe-delivery-stream` returns `DeliveryStreamEncryptionConfiguration.Status` and, on failure, a `FailureDescription.Type` that's plain-English (`KMS_ACCESS_DENIED`, `DISABLED_KMS_KEY`, `CREATE_KMS_GRANT_FAILED`, etc.).
+
+Given the ~20-30 minute *consistency* (not exact, but repeatable) — on a federal/gov AWS account, my leading hypothesis is **automated compliance remediation**: many agencies run scheduled AWS Config/Security Hub remediation (SSM Automation or Lambda) that flags "non-compliant" KMS keys — and our key policy's broad root `"kms:*"`/`"Resource": "*"` statement is a very common thing such scanners flag — and auto-remediates by narrowing the key policy, revoking grants, or disabling the key. A scheduled scan would produce exactly this repeatable-but-not-exact timing. That's a hypothesis, not a confirmed cause — but it's directly testable via CloudTrail.
+
+Let me extend `diagnose_aws.py` to check all of this directly:Now update the verdict logic to lead with the KMS finding, since it directly explains this symptom:Let's verify the script is still syntactically valid, then also add a targeted, standalone one-liner set the user can run *right now* without waiting for a fresh 25-minute failure window:Run it: `python3 diagnose_aws.py --name newrelic-firehose --region us-east-1` (swap in your actual `name_prefix`). The new "3.5" section is the one that matters here — it checks exactly the two places this failure mode is actually visible.
+
+If you want something even faster — a check you can run right now without the script, while a stream is mid-stall — these are the two commands that matter most:
+
+```bash
+# 1. Is SSE actually in a failed state, and why?
+aws firehose describe-delivery-stream \
+  --delivery-stream-name newrelic-firehose-stream \
+  --query 'DeliveryStreamDescription.DeliveryStreamEncryptionConfiguration' \
+  --region us-east-1
+
+# 2. Has anything touched the key or its grants recently?
+aws cloudtrail lookup-events \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=RevokeGrant \
+  --start-time "$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --region us-east-1
+```
+
+(Run that second one with `DisableKey` and `PutKeyPolicy` too — those are the other three things that would cause exactly this symptom.)
+
+**What I'd bet on, in order:**
+
+1. **Something is revoking the grant or narrowing the key policy after the fact** — most likely an automated compliance/remediation process on the federal account. Our key policy's broad `Principal: root, Action: kms:*` statement is a very standard thing for CSPM/Config-conformance tooling to flag. The CloudTrail check above will confirm or rule this out directly instead of us guessing.
+2. **A second, independent `terraform apply`** (yours or a CI pipeline) re-running and briefly recreating/updating the IAM policy or key policy mid-flight, causing a similar but self-inflicted version of #1.
+3. Less likely but worth ruling out: if your account enforces a **custom KMS key store backed by CloudHSM** (common in some federal environments for compliance), an intermittent HSM cluster connectivity drop would produce this exact "works, then silently can't reach the key" pattern. `aws kms describe-key` will show `Origin: AWS_CLOUDHSM` if this applies to you — worth a quick look since it changes where you'd escalate.
+
+Whatever the CloudTrail/metrics output shows, paste it back and we can pin down which of these it actually is rather than continuing to guess.
