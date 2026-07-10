@@ -106,9 +106,9 @@ variable "s3_backup_mode" {
 }
 
 variable "newrelic_endpoint_variant" {
-  description = "\"commercial\" = aws-api.newrelic.com / aws-api.eu01.nr-data.net (standard accounts). \"govcloud\" = gov-aws-api.newrelic.com -- New Relic's documented FedRAMP endpoint specifically for AWS Metric Streams ingest. Note: this only affects the Firehose destination URL. The newrelic_cloud_aws_link_account / newrelic_cloud_aws_integrations resources in newrelic.tf have NO .gov equivalent in the New Relic provider today -- cloud integrations are out of scope for FedRAMP per New Relic's own documentation. Confirm with your NR account rep whether that part of the stack applies to your account before assuming it needs to move too."
+  description = "\"commercial\" = aws-api.newrelic.com / aws-api.eu01.nr-data.net (standard accounts). \"govcloud\" = gov-aws-api.newrelic.com -- New Relic's documented FedRAMP endpoint specifically for AWS Metric Streams ingest. CONFIRMED WORKING for this account/network as of this stack - do not change back to \"commercial\" without re-verifying network egress allows it. Note: this only affects the Firehose destination URL. The newrelic_cloud_aws_link_account / newrelic_cloud_aws_integrations resources in newrelic.tf have NO .gov equivalent in the New Relic provider today -- cloud integrations are out of scope for FedRAMP per New Relic's own documentation. Confirm with your NR account rep whether that part of the stack applies to your account."
   type        = string
-  default     = "commercial"
+  default     = "govcloud"
 
   validation {
     condition     = contains(["commercial", "govcloud"], var.newrelic_endpoint_variant)
