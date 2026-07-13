@@ -1,0 +1,77 @@
+Good — two of those three asks are quick to handle, and I already have the third built in. Let's knock all of it out.
+
+**1. The AWS_OWNED_CMK test AWS wants is already in the stack** — good news. Look at what `enable_customer_managed_kms = false` actually does in `firehose.tf`:
+
+```hcl
+server_side_encryption {
+  enabled  = true
+  key_type = var.enable_customer_managed_kms ? "CUSTOMER_MANAGED_CMK" : "AWS_OWNED_CMK"
+  key_arn  = var.enable_customer_managed_kms ? aws_kms_key.firehose[0].arn : null
+}
+```
+
+`enabled` is always `true` — the toggle only changes *which key type*. So this isn't "no encryption," it's exactly the test AWS Support is asking for: SSE turned on, using AWS's own managed key instead of your CMK. This is worth being precise about, because it's a different test than your earlier "no KMS" baseline (which had encryption fully off). Run:
+
+```bash
+terraform apply -var="enable_customer_managed_kms=false"
+```
+
+and let it sit past 30 minutes. If it holds with `AWS_OWNED_CMK` but fails with your CMK, that isolates the problem to something in your specific key/grant setup rather than KMS-backed SSE in general — a genuinely useful split.
+
+**2. The CloudWatch delivery log stream around the failure window** — this is `aws_cloudwatch_log_group.firehose`, stream `DestinationDelivery` (set up in `cloudwatch.tf`). Pull it filtered to the failure window:
+
+```bash
+aws logs filter-log-events \
+  --log-group-name /aws/kinesisfirehose/newrelic-firehose \
+  --log-stream-names DestinationDelivery \
+  --start-time <epoch_ms_stall_start> \
+  --end-time <epoch_ms_stall_end> \
+  --region us-east-1
+```
+
+That's the log that would show the *actual* HTTP response/rejection reason from New Relic's endpoint at the moment delivery stops, if there is one — distinct from the CloudWatch metrics we've checked so far, which only count things, not show error bodies.
+
+**3. Sharing the key policy** — here's exactly what Terraform declares (from `kms.tf`):The actual JSON key policy Terraform declares — the `AllowFirehoseRole` statement is what answers AWS's specific question ("does the key policy let the Firehose *service* create the grant"):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnableRootAccountFullAccess",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<ACCOUNT_ID>:root" },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowFirehoseRole",
+      "Effect": "Allow",
+      "Principal": { "AWS": "<FIREHOSE_ROLE_ARN>" },
+      "Action": [
+        "kms:GenerateDataKey",
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:CreateGrant"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Worth being precise on the mechanism here, since it's exactly what AWS is asking about: Firehose doesn't call KMS as the bare `firehose.amazonaws.com` service principal — it calls KMS *as the assumed delivery role* (an `sts:assumed-role` session that maps back to the role principal for policy evaluation). So granting `kms:CreateGrant` to `Principal: {AWS: <role_arn>}` here is the correct, standard pattern — not something that also separately needs a `Service: firehose.amazonaws.com` principal statement. That said, don't take my word for the *live* policy — given AWS Support already found drift-adjacent oddities in this case, pull the actual applied policy directly and share that instead of the Terraform source, in case something changed it out-of-band:
+
+```bash
+aws kms get-key-policy \
+  --key-id <your-key-arn-or-id> \
+  --policy-name default \
+  --output text \
+  --region us-east-1
+```
+
+Send AWS Support that CLI output specifically, not the Terraform source — if the two don't match, that mismatch *is* the finding.
+
+**Recap of what to run, both at once:**
+1. `terraform apply -var="enable_customer_managed_kms=false"` — soak past 30 minutes on `AWS_OWNED_CMK`.
+2. Pull `DestinationDelivery` log stream entries bracketing the last failure, and the live `get-key-policy` output — hand both to AWS Support along with the plan above.
