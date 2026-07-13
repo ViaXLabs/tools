@@ -1,0 +1,200 @@
+"""
+Reconcile AWS resources (from src/aws_client.py) with New Relic entities
+(from a Graph built by src/entities.py), because the two systems frequently
+don't use identical names for the same underlying thing.
+
+Matching is driven entirely by config/aws_match_rules.yaml so new AWS
+resource kinds can be supported by editing config, not this file. See that
+file's header comment for the schema.
+
+Confidence tiers:
+  exact   - a normalized candidate name matched exactly
+  fuzzy   - best normalized candidate pair scored >= threshold (difflib)
+  none    - nothing cleared the threshold; flagged for manual review
+"""
+from __future__ import annotations
+
+import difflib
+import logging
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional
+
+import yaml
+
+from .aws_client import AwsResource
+from .entities import Node
+
+logger = logging.getLogger("nr_rel.matcher")
+
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "aws_match_rules.yaml"
+
+
+@dataclass
+class MatchResult:
+    aws_resource: AwsResource
+    nr_node: Optional[Node]
+    confidence: str  # "exact" | "fuzzy" | "none"
+    score: float
+    matched_on: str = ""  # e.g. "aws:'foo-cluster' vs nr:'foo-cluster'"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "aws_kind": self.aws_resource.kind,
+            "aws_id": self.aws_resource.id,
+            "aws_arn": self.aws_resource.arn,
+            "aws_region": self.aws_resource.region,
+            "nr_guid": self.nr_node.guid if self.nr_node else None,
+            "nr_name": self.nr_node.name if self.nr_node else None,
+            "confidence": self.confidence,
+            "score": round(self.score, 3),
+            "matched_on": self.matched_on,
+        }
+
+
+def load_rules(path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def _get_path(obj: dict, dotted: str) -> Optional[str]:
+    """'tags.Name' -> obj['tags']['Name']; 'id' -> obj['id']"""
+    parts = dotted.split(".")
+    current: Any = obj
+    for p in parts:
+        if isinstance(current, dict) and p in current:
+            current = current[p]
+        else:
+            return None
+    return current if isinstance(current, str) else None
+
+
+def _normalize(value: str, ops: list[str]) -> str:
+    result = value
+    for op in ops:
+        if op == "lowercase":
+            result = result.lower()
+        elif op == "strip_non_alnum":
+            result = re.sub(r"[^a-z0-9]", "", result.lower())
+        elif op.startswith("strip_prefix:"):
+            prefix = op.split(":", 1)[1]
+            if result.startswith(prefix):
+                result = result[len(prefix) :]
+        elif op.startswith("strip_suffix:"):
+            suffix = op.split(":", 1)[1]
+            if result.endswith(suffix):
+                result = result[: -len(suffix)]
+        elif op.startswith("replace:"):
+            _, a, b = op.split(":", 2)
+            result = result.replace(a, b)
+    return result
+
+
+def _aws_candidates(resource: AwsResource, rule: dict) -> list[str]:
+    aws_dict = resource.to_dict()
+    candidates = []
+    for field_path in rule.get("aws_name_fields", ["id"]):
+        val = _get_path(aws_dict, field_path)
+        if val:
+            candidates.append(_normalize(val, rule.get("normalize", [])))
+    return list(dict.fromkeys(c for c in candidates if c))
+
+
+def _nr_candidates(node: Node, rule: dict) -> list[str]:
+    candidates = [node.name]
+    for tag_key in rule.get("nr_tag_keys", []):
+        for val in node.tags.get(tag_key, []):
+            candidates.append(val)
+    normalized = [_normalize(c, rule.get("normalize", [])) for c in candidates if c]
+    return list(dict.fromkeys(normalized))
+
+
+def match_resources(
+    aws_resources: list[AwsResource],
+    nr_nodes: list[Node],
+    rules: Optional[dict[str, Any]] = None,
+    fuzzy_threshold: float = 0.82,
+) -> list[MatchResult]:
+    rules = rules or load_rules()
+    default_rule = rules.get("_default", {})
+    results: list[MatchResult] = []
+
+    for resource in aws_resources:
+        rule = rules.get(resource.kind, default_rule)
+        allowed_types = rule.get("nr_entity_types") or []
+        candidate_nodes = (
+            [n for n in nr_nodes if n.entity_type in allowed_types] if allowed_types else nr_nodes
+        )
+
+        aws_cands = _aws_candidates(resource, rule)
+        if not aws_cands:
+            results.append(MatchResult(resource, None, "none", 0.0, "no usable AWS candidate fields"))
+            continue
+
+        best_node: Optional[Node] = None
+        best_score = 0.0
+        best_pair = ("", "")
+        exact_hit = False
+
+        for node in candidate_nodes:
+            nr_cands = _nr_candidates(node, rule)
+            for a in aws_cands:
+                for b in nr_cands:
+                    if a == b:
+                        best_node, best_score, best_pair, exact_hit = node, 1.0, (a, b), True
+                        break
+                    score = difflib.SequenceMatcher(None, a, b).ratio()
+                    if score > best_score:
+                        best_node, best_score, best_pair = node, score, (a, b)
+                if exact_hit:
+                    break
+            if exact_hit:
+                break
+
+        matched_on = f"aws:'{best_pair[0]}' vs nr:'{best_pair[1]}'" if best_node else ""
+        if exact_hit:
+            results.append(MatchResult(resource, best_node, "exact", best_score, matched_on))
+        elif best_node and best_score >= fuzzy_threshold:
+            results.append(MatchResult(resource, best_node, "fuzzy", best_score, matched_on))
+        else:
+            reason = matched_on or "no candidate NR entities in scope"
+            results.append(MatchResult(resource, None, "none", best_score, reason))
+
+    n_exact = sum(1 for r in results if r.confidence == "exact")
+    n_fuzzy = sum(1 for r in results if r.confidence == "fuzzy")
+    n_none = sum(1 for r in results if r.confidence == "none")
+    logger.info("Matched %d exact, %d fuzzy, %d unmatched (of %d AWS resources)", n_exact, n_fuzzy, n_none, len(results))
+    return results
+
+
+def merge_into_graph(graph, match_results: list[MatchResult]):
+    """Add every AWS resource as its own node (system='aws') to `graph`,
+    plus an AWS_MATCH edge to its resolved NR entity where one was found.
+    Unmatched AWS resources are still added, unconnected, so they show up
+    in the report flagged for manual review. Mutates and returns `graph`.
+    """
+    from .entities import Node, Edge  # local import to avoid a hard cycle at module load
+
+    for result in match_results:
+        aws_guid = f"aws:{result.aws_resource.kind}:{result.aws_resource.id}"
+        graph.add_node(
+            Node(
+                guid=aws_guid,
+                name=result.aws_resource.id,
+                type=result.aws_resource.kind,
+                entity_type=f"AWS_{result.aws_resource.kind.upper()}",
+                tags={k: [v] for k, v in result.aws_resource.tags.items()},
+                system="aws",
+            )
+        )
+        if result.nr_node is not None:
+            graph.add_edge(
+                Edge(
+                    source_guid=aws_guid,
+                    target_guid=result.nr_node.guid,
+                    rel_type="AWS_MATCH",
+                    metadata={"confidence": result.confidence, "score": round(result.score, 3), "matched_on": result.matched_on},
+                )
+            )
+    return graph
