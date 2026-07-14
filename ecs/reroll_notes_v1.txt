@@ -1,0 +1,51 @@
+Good question to dig into before committing time to it. Here's the honest technical picture, based on how ECS draining actually behaves — this should let you scope the ticket without guessing.
+
+**What ECS already does for you, if configured right**
+
+This isn't a green-field problem. ECS's container instance draining already has a "don't kill the old one until the new one's healthy" mode built in — it's just governed by settings your services may or may not have tuned:
+
+- When you drain a container instance, ECS doesn't just yank tasks. For tasks that belong to a service, the scheduler replaces them according to that service's `minimumHealthyPercent`/`maximumPercent` deployment config. If `minimumHealthyPercent` is set to 100%, the service scheduler can't remove existing tasks until the replacement tasks are considered healthy.
+- "Healthy" has a specific meaning: for a service that does **not** sit behind a load balancer, tasks are considered healthy once they're simply in the RUNNING state — no real verification happens. For a service that **does** sit behind an ALB/NLB, a replacement task only counts as healthy once it's RUNNING and the load balancer's target group health check reports it healthy. That distinction is probably the crux of your ticket — if any of these services aren't behind a load balancer with a real health check, "properly running" today just means "the process started," not "it's actually serving traffic correctly."
+- `maximumPercent` controls whether replacements even get a chance to prove themselves before the old ones die: a maximum of 200% starts new tasks before stopping the ones being drained, while a maximum of 100% means replacements can't start until the draining tasks have already stopped. So if any service is running at 100/100, there's zero overlap window today — old dies before new is even placed.
+- One trap: if both minimumHealthyPercent and maximumPercent are set to 100%, the service can neither remove old tasks nor start replacements — draining just stalls. So getting the "hold old until new is verified" behavior requires headroom capacity, not just a high healthy-percent floor.
+- On the connection side, ECS already waits for in-flight requests to finish before killing a task: it waits for load balancer deregistration to complete (draining active connections, up to the deregistration delay) before sending SIGTERM to the container.
+- Separately, if your capacity providers use an Auto Scaling Group, there's a **managed instance draining** toggle (on by default when created through the console) that ties the underlying EC2 instance's termination timing to the same task-replacement/health logic, rather than you scripting it by hand — it coordinates instance draining with the service's deployment strategy and health check requirements to time the migration safely. Worth checking if that's already enabled — it may quietly be doing some of this for you, or it may be off and be a much cheaper lever than modifying your script.
+- It's not infinite patience, though: even managed draining has a hard backstop — ECS allows a maximum of 48 hours to drain an instance; after that it terminates the instance and stops whatever tasks remain, even if they're not done. If your Python script uses the `force` flag on deregistration, or has its own shorter timeout, that's likely where any "old thing died before new thing was confirmed" incidents come from today.
+
+**So: is it feasible?**
+
+Yes, almost certainly — and cheaply, for the "real" version of this ask. The mechanism you want already exists; the work is mostly configuration audit + closing gaps in your script, not new infrastructure. I'd bucket the ask into two tiers with very different LOE:
+
+*Tier 1 — "don't kill old until ECS confirms new is healthy" (cheap, days not weeks)*
+- Audit `minimumHealthyPercent`/`maximumPercent` per service in both accounts — set to something like 100/200 (not 100/100) where it isn't already.
+- Confirm which services actually have a load balancer + health check attached (vs. relying on bare RUNNING state) — for internal/worker services without one, consider adding an ECS container-level `healthCheck` in the task definition so "healthy" means something.
+- Change the script to stop force-deregistering or timing out early, and instead poll (`DescribeServices` deployment rollout state, or boto3's `services_stable` waiter, or `DescribeTargetHealth` for LB'd services) until the replacement is actually confirmed before proceeding to terminate the EC2 instance.
+- If you're not already on ASG-backed capacity providers with `managedDraining: ENABLED`, turning that on may let you delete a chunk of the custom script entirely.
+
+*Tier 2 — "keep the old instance around as a rollback safety net for a while, even after new looks healthy" (moderate, real design work)*
+This is a stronger ask than ECS gives natively — an explicit bake/soak period with the option to roll back, not just a single point-in-time health check pass. That needs:
+- State tracking across script runs for "pending termination, still in soak window" instances (rather than immediate drain → terminate).
+- A monitoring hook (CloudWatch alarms, error rates, target health over time) to decide whether to proceed or roll back at the end of the soak window.
+- A real rollback path (reactivating the old container instance / not having torn it down yet).
+- Double-capacity cost for the soak duration, every week, across both accounts — worth quantifying since it's recurring, not one-time.
+- More test cycles in non-prod, including deliberately simulating a bad rollout to prove the rollback path actually works.
+
+**Given the EKS move**
+
+Tier 1 is worth doing regardless of the EKS timeline — it's cheap, reduces real risk now, and the underlying idea (don't remove capacity until the replacement is verified) maps directly onto EKS concepts you'll use anyway: readiness probes gating Service endpoints, `maxUnavailable`/`maxSurge` on rolling updates, and PodDisruptionBudgets that node draining (via Karpenter or Cluster Autoscaler) already respects. So none of that thinking is wasted.
+
+Tier 2 — the custom soak/rollback machinery — is the part I'd push back on building in ECS if EKS is genuinely close. That's bespoke script logic you'd throw away, versus getting it closer to "for free" via PodDisruptionBudgets + a canary tool (e.g., Argo Rollouts) once you're on EKS. I'd time-box it: if EKS is quarters away, it might be worth it as interim risk reduction for prod; if it's weeks/a couple months away, I'd do Tier 1 only and carry the "what does healthy really mean" analysis into the EKS design instead.
+
+**To size this precisely for the ticket**, the facts that would sharpen the estimate are ones you can pull yourself:
+
+```
+# deployment config per service
+aws ecs describe-services --cluster <cluster> --services <service> \
+  --query 'services[0].{deploy:deploymentConfiguration,lb:loadBalancers}'
+
+# whether managed instance draining / termination protection are already on
+aws ecs describe-capacity-providers --capacity-providers <name> \
+  --query 'capacityProviders[0].autoScalingGroupProvider'
+```
+
+Run that across a representative sample of the "post-product" services in both accounts and you'll know within an hour whether this is a one-sprint config change or a real project.
