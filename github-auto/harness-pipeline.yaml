@@ -1,0 +1,89 @@
+pipeline:
+  name: golden-repo-provisioner
+  identifier: golden_repo_provisioner
+  projectIdentifier: <+input>
+  orgIdentifier: <+input>
+
+  # --- Fill these in for the person triggering the pipeline ---
+  variables:
+    - name: owner
+      type: String
+      description: "GitHub org the new repo will live under"
+      value: <+input>
+    - name: new_repo_name
+      type: String
+      description: "Name for the new repo, e.g. payments-service"
+      value: <+input>
+    - name: team
+      type: String
+      description: "Requesting team's GitHub team slug"
+      value: <+input>
+    - name: mode
+      type: String
+      description: "'config' (use JSON standard) or 'mirror' (copy a live reference repo)"
+      value: <+input>.allowedValues(config,mirror)
+    - name: template_or_source_repo
+      type: String
+      description: "owner/repo of the golden template (used to generate the new repo, and as the mirror source if mode=mirror)"
+      value: <+input>
+
+  stages:
+    - stage:
+        name: Provision Golden Repo
+        identifier: provision_golden_repo
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Install deps
+                  identifier: install_deps
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      pip install --quiet requests
+
+              - step:
+                  name: Apply golden repo standard
+                  identifier: apply_golden_repo
+                  type: Run
+                  spec:
+                    shell: Sh
+                    envVariables:
+                      GITHUB_TOKEN: <+secrets.getValue("github_admin_token")>
+                    command: |
+                      set -e
+
+                      if [ "<+pipeline.variables.mode>" = "config" ]; then
+                        python3 apply_golden_repo.py \
+                          --owner "<+pipeline.variables.owner>" \
+                          --new-repo-name "<+pipeline.variables.new_repo_name>" \
+                          --team "<+pipeline.variables.team>" \
+                          --mode config \
+                          --config golden-repo-config.json \
+                          --template-repo "<+pipeline.variables.template_or_source_repo>"
+                      else
+                        python3 apply_golden_repo.py \
+                          --owner "<+pipeline.variables.owner>" \
+                          --new-repo-name "<+pipeline.variables.new_repo_name>" \
+                          --team "<+pipeline.variables.team>" \
+                          --mode mirror \
+                          --source-repo "<+pipeline.variables.template_or_source_repo>"
+                      fi
+
+              - step:
+                  name: Notify
+                  identifier: notify
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      echo "Repo <+pipeline.variables.owner>/<+pipeline.variables.new_repo_name> provisioned for team <+pipeline.variables.team>."

@@ -1,0 +1,58 @@
+{
+  "_comment": "This is the declarative source of truth for how a 'golden' repo should be configured. Used when running apply_golden_repo.py in --config mode. Adjust per program/contract standard, then check this file into your golden repo itself (e.g. /governance/golden-repo-config.json) so it travels with the template.",
+
+  "repo_settings": {
+    "has_wiki": false,
+    "has_issues": true,
+    "has_projects": false,
+    "has_downloads": true,
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "delete_branch_on_merge": true,
+    "allow_auto_merge": true,
+    "visibility": "private",
+    "default_branch": "main"
+  },
+
+  "branch_protection": {
+    "branch": "main",
+    "required_approving_review_count": 1,
+    "require_code_owner_reviews": true,
+    "enforce_admins": true,
+    "required_linear_history": true,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "required_status_checks": {
+      "strict": true,
+      "contexts": ["ci/build", "ci/test"]
+    }
+  },
+
+  "topics": ["golden-template", "program-standard"],
+
+  "labels": [
+    { "name": "bug", "color": "d73a4a", "description": "Something isn't working" },
+    { "name": "needs-triage", "color": "fbca04", "description": "Needs initial review" },
+    { "name": "security", "color": "b60205", "description": "Security-relevant change" }
+  ],
+
+  "team_permissions": {
+    "_comment": "default applies to the requesting team unless a specific override exists below. Valid GitHub values: pull, triage, push, maintain, admin",
+    "default": "push",
+    "overrides": {
+      "platform-team": "admin",
+      "qa-team": "triage",
+      "security-team": "pull"
+    }
+  },
+
+  "webhooks": [
+    {
+      "url": "https://example.com/hooks/repo-events",
+      "content_type": "json",
+      "events": ["push", "pull_request"],
+      "active": true
+    }
+  ]
+}
