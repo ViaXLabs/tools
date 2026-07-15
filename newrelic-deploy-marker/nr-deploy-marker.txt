@@ -1,0 +1,62 @@
+Here's the shape of the fix: right now your template takes a GUID directly and POSTs straight to the deployment-marker mutation. You want to insert one extra NerdGraph call in front of it that resolves **name → GUID**, then pipe that GUID into the existing marker call. Two curl calls, same script, no manual GUID-hunting for teams.
+
+**Step 1 — resolve the GUID from the service/APM name**
+
+NerdGraph has an `entitySearch` query for exactly this. You search by `name` and constrain `domainType` to APM so you don't accidentally match a browser or infra entity with the same name:
+
+```bash
+GUID=$(curl -s https://api.newrelic.com/graphql \
+  -H "Content-Type: application/json" \
+  -H "API-Key: $NEW_RELIC_USER_API_KEY" \
+  -d '{
+    "query": "{ actor { entitySearch(query: \"name = '\''"'"'"$SERVICE_NAME"'"'\'\'' AND domainType = '\''APM-APPLICATION'\''\") { results { entities { guid name } } } } }"
+  }' | jq -r '.data.actor.entitySearch.results.entities[0].guid')
+```
+
+That quoting gets ugly fast in bash — cleaner to build the query string as a variable first:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="$1"   # what the team passes in now, instead of a GUID
+
+# --- Step 1: look up the GUID by name ---
+QUERY=$(jq -n --arg name "$SERVICE_NAME" \
+  '{query: "{ actor { entitySearch(query: \"name = '"'"'\($name)'"'"' AND domainType = '"'"'APM-APPLICATION'"'"'\") { count results { entities { guid name accountId } } } } }"}')
+
+RESPONSE=$(curl -s https://api.newrelic.com/graphql \
+  -H "Content-Type: application/json" \
+  -H "API-Key: $NEW_RELIC_USER_API_KEY" \
+  -d "$QUERY")
+
+COUNT=$(echo "$RESPONSE" | jq -r '.data.actor.entitySearch.count')
+
+if [ "$COUNT" -eq 0 ]; then
+  echo "No APM entity found named '$SERVICE_NAME'. Check spelling / that it's reporting." >&2
+  exit 1
+elif [ "$COUNT" -gt 1 ]; then
+  echo "Multiple entities matched '$SERVICE_NAME':" >&2
+  echo "$RESPONSE" | jq -r '.data.actor.entitySearch.results.entities[] | "\(.name) — \(.guid) — account \(.accountId)"' >&2
+  exit 1
+fi
+
+GUID=$(echo "$RESPONSE" | jq -r '.data.actor.entitySearch.results.entities[0].guid')
+echo "Resolved $SERVICE_NAME -> $GUID"
+
+# --- Step 2: your existing deployment marker curl, unchanged except GUID is now a variable ---
+curl -s https://api.newrelic.com/graphql \
+  -H "Content-Type: application/json" \
+  -H "API-Key: $NEW_RELIC_USER_API_KEY" \
+  -d "$(jq -n --arg guid "$GUID" --arg version "$DEPLOY_VERSION" \
+    '{query: "mutation { changeTrackingCreateDeployment(deployment: {entityGuid: \"\($guid)\", version: \"\($version)\"}) { deploymentId entityGuid } }"}')"
+```
+
+A few things worth deciding before you roll this out:
+
+- **Uniqueness of names.** If two teams both have a service literally named `payments-api` in different accounts, the count check above will catch it and force them to disambiguate (you could extend the query with `AND accountId = 'X'` if each team's account is known/fixed).
+- **Which mutation you're actually using today.** I used `changeTrackingCreateDeployment` above (the current NerdGraph mutation for deployment markers) — if your existing template calls the older `deploymentCreate` or similar, just swap the mutation name/fields in step 2 and keep step 1 as-is.
+- **API key type.** `entitySearch` needs a User API key (not a license/ingest key) with entity read access — make sure whatever key the template already uses has that scope.
+- **Case/whitespace on the name input.** Might be worth trimming and maybe doing a `LIKE` fallback if exact match returns zero, in case teams don't type the exact casing New Relic has stored.
+
+Want me to also adapt this into your actual template format (e.g. if it's a GitHub Actions step, Jenkins pipeline, or plain shell script teams paste values into)? If you paste the current template I can edit it directly instead of guessing structure.
