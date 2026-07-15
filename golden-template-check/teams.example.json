@@ -1,0 +1,5 @@
+[
+  {"team": "Payments", "repo": "my-org/payments-service"},
+  {"team": "Checkout", "repo": "my-org/checkout-service", "branch": "main"},
+  {"name": "Search", "repository": "my-org/search-service"}
+]

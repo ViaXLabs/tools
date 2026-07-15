@@ -1,0 +1,5 @@
+# Golden template keywords — one per line, optional ", Display Name"
+changeTrackingCreateDeployment, Deployment Marker Template
+k8s-canary-deploy, Canary Deploy Template
+approval-gate-slack, Slack Approval Gate
+docker-build-push, Docker Build & Push
