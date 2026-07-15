@@ -1,0 +1,705 @@
+# The part AWS usually explains badly
+
+Assuming your path is:
+
+```text
+CloudWatch Metric Streams
+        ↓
+Amazon Data Firehose
+        ↓
+New Relic HTTP endpoint
+```
+
+**My strongest diagnosis is that the CMK permissions are attached to the wrong role—or only one of two required roles.**
+
+There are **two completely separate KMS authorization moments**:
+
+1. **Terraform enables encryption.**
+   The Terraform execution role causes Firehose to call `kms:CreateGrant`.
+
+2. **CloudWatch publishes every batch.**
+   The CloudWatch metric-stream role calls `PutRecord`/`PutRecordBatch`, and Firehose validates that this producer role has `kms:GenerateDataKey` and `kms:Decrypt` in both its IAM policy and the KMS key policy.
+
+The ordinary **Firehose destination role**—the role used for S3 backup and error logging—is not the principal involved in either of those checks unless the S3 backup is also using the same CMK. AWS explicitly says that the caller of `PutRecord`/`PutRecordBatch` needs the KMS permissions, and CloudWatch publishes by assuming the metric-stream IAM role. ([AWS Documentation][1])
+
+```text
+streams.metrics.cloudwatch.amazonaws.com
+        │ assumes
+        ▼
+metric-stream-role
+        │
+        ├── firehose:PutRecord
+        ├── firehose:PutRecordBatch
+        ├── kms:GenerateDataKey     ← commonly missing
+        └── kms:Decrypt             ← commonly missing
+                    │
+                    ▼
+            Firehose stream CMK
+                    ▲
+                    │ KMS grant
+                    │
+Terraform execution role
+        ├── firehose:StartDeliveryStreamEncryption
+        └── kms:CreateGrant         ← other commonly missing permission
+```
+
+Adding only `firehose.amazonaws.com` to the key policy usually misses both documented checks.
+
+---
+
+# The Terraform wrinkle that makes this especially nasty
+
+The current HashiCorp AWS provider implementation does not put the encryption configuration into its initial `CreateDeliveryStream` request. It:
+
+1. Creates the delivery stream.
+2. Waits until it is active.
+3. Calls `StartDeliveryStreamEncryption`.
+4. Waits for encryption to become enabled.
+
+That means your Terraform execution role specifically needs permission for the **second operation**, including `kms:CreateGrant`. This is visible in the current provider source. ([GitHub][2])
+
+AWS confirms that Firehose calls `CreateGrant` for a customer-managed key and manages that grant afterward. ([AWS Documentation][3])
+
+This creates several consequences that do not occur with an AWS-owned key:
+
+| Point in the flow            | Effective principal           | Required access                                                                         |
+| ---------------------------- | ----------------------------- | --------------------------------------------------------------------------------------- |
+| Terraform apply              | Terraform execution role      | `firehose:StartDeliveryStreamEncryption`, `kms:CreateGrant`, normally `kms:DescribeKey` |
+| Metric publishing            | CloudWatch metric-stream role | `firehose:PutRecord`, `firehose:PutRecordBatch`, `kms:GenerateDataKey`, `kms:Decrypt`   |
+| Delivery to New Relic        | Firehose service over HTTPS   | New Relic access/license key; not AWS IAM                                               |
+| Failed-data backup to S3     | Firehose destination role     | S3 permissions and, if applicable, permissions on the **S3 backup CMK**                 |
+| Firehose internal encryption | KMS grant managed by Firehose | Created during `StartDeliveryStreamEncryption`                                          |
+
+For supported HTTP providers including New Relic, Firehose does not use IAM to authenticate to the endpoint; the Firehose destination role exists primarily for S3 backup, CloudWatch error logs, Lambda transforms, and similar AWS-side resources. ([AWS Documentation][4])
+
+---
+
+# Terraform pattern that avoids the dependency mess
+
+The important dependency order is:
+
+```text
+metric-stream IAM role
+    ↓
+KMS key whose policy names that role
+    ↓
+Firehose using that KMS key
+    ↓
+metric-stream role policy naming the Firehose ARN
+    ↓
+CloudWatch metric stream
+```
+
+That avoids a Terraform cycle. Create the metric-stream role separately from its permissions policy.
+
+## 1. Create the CloudWatch metric-stream role first
+
+```hcl
+data "aws_partition" "current" {}
+
+data "aws_caller_identity" "current" {}
+
+variable "firehose_name" {
+  type = string
+}
+
+variable "terraform_execution_role_arn" {
+  description = <<-EOT
+    Stable IAM role ARN used by Terraform, for example:
+    arn:aws:iam::123456789012:role/platform-terraform
+
+    Do not pass an arn:aws:sts::...:assumed-role/... session ARN.
+  EOT
+  type = string
+}
+
+data "aws_iam_policy_document" "metric_stream_trust" {
+  statement {
+    sid     = "AllowCloudWatchMetricStreams"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["streams.metrics.cloudwatch.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "metric_stream" {
+  name               = "${var.firehose_name}-metric-stream"
+  assume_role_policy = data.aws_iam_policy_document.metric_stream_trust.json
+}
+```
+
+The trust principal must be exactly:
+
+```text
+streams.metrics.cloudwatch.amazonaws.com
+```
+
+not `cloudwatch.amazonaws.com`, `logs.amazonaws.com`, or `firehose.amazonaws.com`. ([AWS Documentation][5])
+
+---
+
+## 2. Build the CMK policy around the two real actors
+
+```hcl
+data "aws_iam_policy_document" "firehose_stream_sse_key" {
+  # This does not give every principal in the account unrestricted access.
+  # It allows IAM policies in this account to participate in KMS authorization.
+  statement {
+    sid    = "EnableAccountIAMPolicies"
+    effect = "Allow"
+
+    principals {
+      type = "AWS"
+      identifiers = [
+        "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      ]
+    }
+
+    actions   = ["kms:*"]
+    resources = ["*"]
+  }
+
+  # Runtime producer: CloudWatch assumes this IAM role and calls PutRecord.
+  statement {
+    sid    = "AllowMetricStreamProducer"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.metric_stream.arn]
+    }
+
+    actions = [
+      "kms:GenerateDataKey",
+      "kms:Decrypt",
+    ]
+
+    resources = ["*"]
+  }
+
+  # Apply-time actor: Firehose creates its service grant on behalf of
+  # the role running Terraform.
+  statement {
+    sid    = "AllowFirehoseGrantCreation"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = [var.terraform_execution_role_arn]
+    }
+
+    actions   = ["kms:CreateGrant"]
+    resources = ["*"]
+
+    condition {
+      test     = "Bool"
+      variable = "kms:GrantIsForAWSResource"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "AllowTerraformToDescribeKey"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = [var.terraform_execution_role_arn]
+    }
+
+    actions   = ["kms:DescribeKey"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_kms_key" "firehose_stream_sse" {
+  description             = "SSE key for DirectPut Firehose ${var.firehose_name}"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  policy                  = data.aws_iam_policy_document.firehose_stream_sse_key.json
+
+  # Default KMS key type is symmetric ENCRYPT_DECRYPT, which is what
+  # Firehose requires.
+  tags = {
+    Purpose = "cloudwatch-metric-stream-firehose-sse"
+  }
+}
+
+resource "aws_kms_alias" "firehose_stream_sse" {
+  name          = "alias/${var.firehose_name}-firehose-sse"
+  target_key_id = aws_kms_key.firehose_stream_sse.key_id
+}
+```
+
+`kms:GrantIsForAWSResource` is specifically intended to permit an AWS-integrated service to create a grant on behalf of the named principal without allowing that principal to create arbitrary grants itself. ([AWS Documentation][6])
+
+The account-root statement is also significant. With KMS, an IAM `Allow` does not automatically work unless the key policy either directly grants the principal access or enables the account to delegate access through IAM. ([AWS Documentation][7])
+
+---
+
+## 3. Give the metric-stream role both Firehose and KMS permissions
+
+Put these in the **same role CloudWatch assumes for the metric stream**:
+
+```hcl
+data "aws_iam_policy_document" "metric_stream_runtime" {
+  statement {
+    sid    = "WriteToFirehose"
+    effect = "Allow"
+
+    actions = [
+      "firehose:PutRecord",
+      "firehose:PutRecordBatch",
+    ]
+
+    resources = [
+      aws_kinesis_firehose_delivery_stream.new_relic.arn
+    ]
+  }
+
+  statement {
+    sid    = "UseFirehoseStreamCMK"
+    effect = "Allow"
+
+    actions = [
+      "kms:GenerateDataKey",
+      "kms:Decrypt",
+    ]
+
+    resources = [
+      aws_kms_key.firehose_stream_sse.arn
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "metric_stream_runtime" {
+  name   = "${var.firehose_name}-metric-stream-runtime"
+  role   = aws_iam_role.metric_stream.id
+  policy = data.aws_iam_policy_document.metric_stream_runtime.json
+}
+```
+
+This is the piece I would bet is missing in most failed configurations. People naturally give the KMS permission to the Firehose role because “Firehose is doing the encryption.” But for Direct PUT, Firehose validates the **producer’s** permission when `PutRecord` or `PutRecordBatch` is called. ([AWS Documentation][1])
+
+---
+
+## 4. Use the key ARN—not the alias ARN—in the Firehose resource
+
+Merge this block into your existing delivery stream:
+
+```hcl
+resource "aws_kinesis_firehose_delivery_stream" "new_relic" {
+  name        = var.firehose_name
+  destination = "http_endpoint"
+
+  server_side_encryption {
+    enabled  = true
+    key_type = "CUSTOMER_MANAGED_CMK"
+
+    # Correct:
+    key_arn = aws_kms_key.firehose_stream_sse.arn
+
+    # Incorrect:
+    # key_arn = aws_kms_alias.firehose_stream_sse.arn
+  }
+
+  # Keep your currently working http_endpoint_configuration,
+  # S3 backup configuration, logging, and New Relic access key here.
+}
+```
+
+Firehose’s API requires a `KeyARN` matching the KMS `...:key/...` ARN format. An alias ARN is not the expected value. ([AWS Documentation][3])
+
+A particularly sneaky variant is a key or IAM policy containing:
+
+```json
+"Condition": {
+  "StringEquals": {
+    "kms:RequestAlias": "alias/my-firehose-key"
+  }
+}
+```
+
+That condition only succeeds when the KMS request itself identifies the key using the alias. Firehose is configured with a key ARN, so an alias-request condition is highly likely to reject the operation even though the key has that alias. AWS distinguishes `kms:RequestAlias` from `kms:ResourceAliases`; the latter evaluates aliases associated with the key regardless of how the request identified it. ([AWS Documentation][6])
+
+---
+
+## 5. Do not let the metric stream start before its role policy exists
+
+```hcl
+resource "aws_cloudwatch_metric_stream" "new_relic" {
+  name          = "${var.firehose_name}-metrics"
+  role_arn      = aws_iam_role.metric_stream.arn
+  firehose_arn  = aws_kinesis_firehose_delivery_stream.new_relic.arn
+  output_format = var.metric_stream_output_format
+
+  depends_on = [
+    aws_iam_role_policy.metric_stream_runtime
+  ]
+}
+```
+
+The metric stream and Firehose must be in the same account and Region. ([AWS Documentation][8])
+
+---
+
+# The Terraform execution role still needs an identity policy
+
+The key policy above permits the role at the resource-policy level. I would also put this on the Terraform execution role, especially in an organization with permission boundaries or centrally generated KMS policies:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateFirehoseServiceGrant",
+      "Effect": "Allow",
+      "Action": "kms:CreateGrant",
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/KEY_ID",
+      "Condition": {
+        "Bool": {
+          "kms:GrantIsForAWSResource": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeFirehoseKey",
+      "Effect": "Allow",
+      "Action": "kms:DescribeKey",
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/KEY_ID"
+    },
+    {
+      "Sid": "ManageFirehoseEncryption",
+      "Effect": "Allow",
+      "Action": [
+        "firehose:StartDeliveryStreamEncryption",
+        "firehose:DescribeDeliveryStream"
+      ],
+      "Resource": "arn:aws:firehose:REGION:ACCOUNT_ID:deliverystream/STREAM_NAME"
+    }
+  ]
+}
+```
+
+This policy must be effective **before** the provider reaches `StartDeliveryStreamEncryption`. If the execution role and its permissions are themselves being created during the same run, make the dependency explicit or bootstrap that role separately.
+
+Also, do not write this in the KMS policy:
+
+```hcl
+identifiers = [data.aws_caller_identity.current.arn]
+```
+
+when your CI/CD system assumes a role. In that situation, `current.arn` is often an ephemeral ARN such as:
+
+```text
+arn:aws:sts::123456789012:assumed-role/platform-terraform/build-9182
+```
+
+Name the stable IAM role instead:
+
+```text
+arn:aws:iam::123456789012:role/platform-terraform
+```
+
+Otherwise you are effectively binding the key policy to one temporary session—or creating an invalid/stale principal situation later.
+
+---
+
+# The obscure AWS land mines
+
+## 1. Terraform credentials more than six hours old
+
+AWS has a remarkably specific restriction: `CreateDeliveryStream` and `StartDeliveryStreamEncryption` should not be called with session credentials more than **six hours old** when a KMS grant must be created. A valid 12-hour STS session can therefore work for ordinary Firehose creation and still fail specifically when a CMK is enabled. ([AWS Documentation][9])
+
+Before testing again:
+
+```bash
+aws sts get-caller-identity
+```
+
+Then refresh/re-assume the Terraform execution role immediately before the apply.
+
+This is exactly the kind of thing that makes “AWS-managed key works, CMK fails” look nonsensical.
+
+---
+
+## 2. The provider creates the stream before enabling encryption
+
+During `ENABLING`, Firehose continues accepting data, but AWS says that data is not encrypted. It can also take up to five seconds after the status changes to `ENABLED` before all newly written records are encrypted. ([AWS Documentation][9])
+
+For initial creation, Terraform normally waits for encryption before creating a dependent metric stream, provided your dependency graph is correct. But this matters during an encryption-key change when the metric stream already exists.
+
+For a strict “must be encrypted in the original create request” compliance requirement, the normal HashiCorp AWS provider path is a poor fit. AWS’s native `CreateDeliveryStream` API and CloudFormation resource both support `DeliveryStreamEncryptionConfigurationInput` during creation. Terraform can deploy that CloudFormation resource with `aws_cloudformation_stack` if the temporary unencrypted state is unacceptable. ([AWS Documentation][1])
+
+---
+
+## 3. Do not guess Firehose’s encryption context
+
+A copied key policy might contain an encryption-context restriction borrowed from S3, CloudWatch Logs, or another Firehose example.
+
+For **Firehose stream SSE**, AWS says the encryption context is system-generated and explicitly says your application should not assume its format or content. Start without any `kms:EncryptionContext:*` condition for the stream CMK. Inspect CloudTrail first before considering additional restrictions. ([AWS Documentation][1])
+
+This does not apply to an S3 backup CMK: AWS documents stable S3-specific conditions such as `kms:ViaService = s3.REGION.amazonaws.com` and the S3 ARN encryption context for that separate use case. ([AWS Documentation][4])
+
+---
+
+## 4. There may actually be three different CMKs
+
+Do not conflate these encryption boundaries:
+
+```text
+A. Firehose stream/source-record SSE CMK
+   Producer role + Terraform/CreateGrant
+
+B. S3 failed-record backup CMK
+   Firehose destination role + S3 encryption context
+
+C. CloudWatch Logs log-group CMK
+   CloudWatch Logs service principal + log-group encryption context
+```
+
+Reusing one key for all three is possible but makes the policy hard to reason about. I generally use separate keys unless an organizational policy explicitly requires consolidation.
+
+A CMK in `server_side_encryption` does **not** automatically grant the Firehose destination role permission to write SSE-KMS objects to the backup bucket.
+
+---
+
+## 5. A key-policy `Allow` cannot beat an explicit deny
+
+Even a correct IAM policy and key policy still lose to:
+
+* An Organizations SCP.
+* A permission boundary.
+* A session policy.
+* A KMS VPC endpoint policy.
+* An explicit `Deny` in the key policy.
+* Tag- or alias-based conditions that do not match.
+* A key in `Disabled` or `PendingDeletion`.
+
+KMS endpoint policies are another authorization layer when calls traverse a KMS VPC endpoint. ([AWS Documentation][10])
+
+---
+
+## 6. Symmetric key and regional key ARN only
+
+Firehose stream SSE supports symmetric KMS keys, not asymmetric keys. Use the key or multi-Region replica that exists in the same Region as that regional Firehose stream. ([AWS Documentation][1])
+
+For a multi-Region deployment, each regional module should receive that Region’s replica-key ARN—not the primary key ARN from another Region.
+
+---
+
+## 7. One CMK can encrypt only 500 Firehose streams
+
+This is probably irrelevant unless you are rolling metric streams across a large organization, but Firehose documents a maximum of 500 Firehose streams per customer-managed key. ([AWS Documentation][3])
+
+---
+
+# How to prove exactly which principal is failing
+
+## Step 1: Inspect the actual encryption state
+
+```bash
+aws firehose describe-delivery-stream \
+  --region "$AWS_REGION" \
+  --delivery-stream-name "$FIREHOSE_NAME" \
+  --query 'DeliveryStreamDescription.{
+    DeliveryStatus:DeliveryStreamStatus,
+    Encryption:DeliveryStreamEncryptionConfiguration
+  }'
+```
+
+Look for:
+
+```json
+{
+  "Status": "ENABLING_FAILED",
+  "KeyType": "CUSTOMER_MANAGED_CMK",
+  "KeyARN": "...",
+  "FailureDescription": {
+    "Type": "...",
+    "Details": "..."
+  }
+}
+```
+
+`FailureDescription` is specifically populated when encryption-related create/start/stop operations fail. ([AWS Documentation][11])
+
+---
+
+## Step 2: Test the metric-stream role’s identity policy
+
+Run these separately to avoid mixing incompatible resource types:
+
+```bash
+aws iam simulate-principal-policy \
+  --policy-source-arn "$METRIC_STREAM_ROLE_ARN" \
+  --action-names \
+    firehose:PutRecord \
+    firehose:PutRecordBatch \
+  --resource-arns "$FIREHOSE_ARN"
+```
+
+```bash
+aws iam simulate-principal-policy \
+  --policy-source-arn "$METRIC_STREAM_ROLE_ARN" \
+  --action-names \
+    kms:GenerateDataKey \
+    kms:Decrypt \
+  --resource-arns "$KMS_KEY_ARN"
+```
+
+This proves only the identity-policy side. It does not prove that the KMS key policy, SCP, permission boundary, or endpoint policy permits the request.
+
+---
+
+## Step 3: Confirm that Firehose created a grant
+
+```bash
+aws kms list-grants \
+  --key-id "$KMS_KEY_ARN" \
+  --query 'Grants[].{
+    Name:Name,
+    Grantee:GranteePrincipal,
+    RetiringPrincipal:RetiringPrincipal,
+    Operations:Operations,
+    Constraints:Constraints
+  }'
+```
+
+Interpretation:
+
+* **No grant after Terraform tried to enable SSE:** focus on the Terraform role, `kms:CreateGrant`, key policy, stale STS credentials, SCP, and key state.
+* **Grant exists but metric publishing fails:** focus on the CloudWatch metric-stream role’s `GenerateDataKey` and `Decrypt` permissions.
+* **Records enter Firehose but delivery fails:** the stream CMK is probably no longer your issue.
+
+---
+
+## Step 4: Use CloudTrail as the source of truth
+
+Search the exact failure window for:
+
+```text
+firehose.amazonaws.com
+    StartDeliveryStreamEncryption
+    PutRecord
+    PutRecordBatch
+
+kms.amazonaws.com
+    CreateGrant
+    GenerateDataKey
+    Decrypt
+```
+
+CLI example:
+
+```bash
+aws cloudtrail lookup-events \
+  --lookup-attributes \
+    AttributeKey=EventName,AttributeValue=CreateGrant \
+  --start-time "2026-07-15T17:00:00Z" \
+  --end-time   "2026-07-15T18:00:00Z" \
+  --max-results 50
+```
+
+Repeat for `GenerateDataKey`, `Decrypt`, and `StartDeliveryStreamEncryption`.
+
+The decisive fields are:
+
+```text
+userIdentity.arn
+errorCode
+errorMessage
+requestParameters.keyId
+requestParameters.granteePrincipal
+requestParameters.encryptionContext
+```
+
+That tells you whether the denied principal was:
+
+```text
+Terraform execution role session
+CloudWatch metric-stream role session
+Firehose service/grant
+Firehose destination role
+```
+
+Do not infer it from the resource name or from which policy “looks related.”
+
+---
+
+## Step 5: Check the two metric namespaces
+
+For CloudWatch Metric Streams:
+
+```text
+AWS/CloudWatch/MetricStreams
+    MetricUpdate
+    TotalMetricUpdate
+    PublishErrorRate
+```
+
+For Firehose:
+
+```text
+AWS/Firehose
+    IncomingRecords
+    IncomingBytes
+    KMSKeyAccessDenied
+    KMSKeyDisabled
+    KMSKeyInvalidState
+    KMSKeyNotFound
+```
+
+New Relic’s troubleshooting guidance follows the same boundary: first establish whether the metric stream is emitting, then whether Firehose is receiving, and only then inspect endpoint delivery. ([New Relic Documentation][12])
+
+---
+
+# Failure signatures mapped to the likely cause
+
+| Symptom                                                                            | Most likely cause                                                                                                                                    |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Terraform says `starting Kinesis Firehose Delivery Stream (...) encryption` failed | Terraform role cannot `kms:CreateGrant`, cannot call `StartDeliveryStreamEncryption`, key policy rejects it, or credentials are older than six hours |
+| Encryption status is `ENABLING_FAILED`                                             | Grant/key-state/key-policy problem; inspect `FailureDescription`                                                                                     |
+| Encryption is `ENABLED`, but Metric Streams `PublishErrorRate` rises               | Metric-stream role lacks KMS or Firehose runtime permissions                                                                                         |
+| Firehose `IncomingRecords` stays at zero                                           | Producer/metric-stream side; not New Relic                                                                                                           |
+| `KMSKeyAccessDenied` rises                                                         | Producer’s KMS validation or Firehose’s grant/key policy                                                                                             |
+| `KMSKeyNotFound` rises                                                             | Wrong key ARN, wrong Region, deleted key, or bad key reference                                                                                       |
+| `IncomingRecords` rises but `DeliveryToHttpEndpoint` fails                         | New Relic endpoint, region/data center, access key, payload, throttling, or HTTP response issue                                                      |
+| Only failed-data backup fails                                                      | Firehose destination role, S3 bucket policy, or the S3 backup CMK                                                                                    |
+| Works on second apply                                                              | IAM/key-policy propagation, role creation race, or the first apply created the stream but failed while enabling encryption                           |
+
+---
+
+# The exact order I would attack this
+
+1. Run Terraform with freshly assumed credentials.
+2. Make `terraform_execution_role_arn` a stable IAM role ARN, not `data.aws_caller_identity.current.arn`.
+3. Confirm that role has effective `kms:CreateGrant`.
+4. Add `kms:GenerateDataKey` and `kms:Decrypt` to the **CloudWatch metric-stream role**.
+5. Put that same metric-stream role in the KMS key policy.
+6. Use `aws_kms_key.key.arn`, not an alias ARN.
+7. Temporarily remove `kms:RequestAlias`, `kms:ViaService`, encryption-context, principal-tag, and request-tag conditions from the stream-CMK statements.
+8. Describe the Firehose encryption status.
+9. Inspect CloudTrail for `CreateGrant` and `GenerateDataKey`.
+10. Only after the stream is healthy, separately harden the S3 backup key policy.
+
+And one operational warning: when Firehose cannot decrypt records because of KMS access, key state, or missing-key failures, it retains them for up to 24 hours. Records still unresolved after that retention window can be discarded. ([AWS Documentation][1])
+
+**The highest-probability fix is the combination of `kms:CreateGrant` on the Terraform execution role and `kms:GenerateDataKey` plus `kms:Decrypt` on the CloudWatch metric-stream role—with both stable IAM role ARNs represented correctly in the key policy.**
+
+[1]: https://docs.aws.amazon.com/firehose/latest/dev/encryption.html "Data protection in Amazon Data Firehose - Amazon Data Firehose"
+[2]: https://github.com/hashicorp/terraform-provider-aws/blob/main/internal/service/firehose/delivery_stream.go?utm_source=chatgpt.com "terraform-provider-aws/internal/service/firehose/delivery_stream.go at ..."
+[3]: https://docs.aws.amazon.com/firehose/latest/APIReference/API_DeliveryStreamEncryptionConfigurationInput.html "DeliveryStreamEncryptionConfigurationInput - Amazon Data Firehose"
+[4]: https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html "Controlling access with Amazon Data Firehose - Amazon Data Firehose"
+[5]: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-metric-streams-trustpolicy.html "Trust between CloudWatch and Firehose - Amazon CloudWatch"
+[6]: https://docs.aws.amazon.com/kms/latest/developerguide/conditions-kms.html "AWS KMS condition keys - AWS Key Management Service"
+[7]: https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-overview.html "Creating a key policy - AWS Key Management Service"
+[8]: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-metric-streams-setup-datalake.html "Custom setup with Firehose - Amazon CloudWatch"
+[9]: https://docs.aws.amazon.com/firehose/latest/APIReference/API_StartDeliveryStreamEncryption.html "StartDeliveryStreamEncryption - Amazon Data Firehose"
+[10]: https://docs.aws.amazon.com/kms/latest/developerguide/iam-policies.html "Using IAM policies with AWS KMS - AWS Key Management Service"
+[11]: https://docs.aws.amazon.com/firehose/latest/APIReference/API_DeliveryStreamEncryptionConfiguration.html "DeliveryStreamEncryptionConfiguration - Amazon Data Firehose"
+[12]: https://docs.newrelic.com/docs/infrastructure/amazon-integrations/troubleshooting/no-data-metric-streams/ "No data appears: AWS CloudWatch metric streams | New Relic Documentation"
