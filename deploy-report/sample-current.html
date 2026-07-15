@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment Manifest</title>
+<style>
+:root {
+  --paper: #E7EDEB;
+  --paper-raised: #F6F9F8;
+  --ink: #16232B;
+  --ink-soft: #52646A;
+  --line: #B9C8C5;
+  --accent-dev: #2C5F7C;
+  --accent-systest: #6B5B95;
+  --accent-qa: #B9791F;
+  --accent-prod: #B8412B;
+  --accent-healthy: #2F8F7A;
+  --accent-alert: #B8412B;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, 'Liberation Mono', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans);
+  line-height: 1.45; padding: 0 0 4rem;
+}
+a { color: var(--accent-dev); }
+:focus-visible { outline: 2px solid var(--accent-dev); outline-offset: 2px; }
+
+.manifest-header {
+  background: var(--ink); color: var(--paper-raised);
+  padding: 2.5rem 2rem 2rem; border-bottom: 4px double var(--line);
+}
+.header-top {
+  display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;
+  max-width: 1100px; margin: 0 auto;
+}
+.eyebrow {
+  font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.18em;
+  font-size: 0.75rem; color: #8FADA6; margin: 0 0 0.4rem;
+}
+h1 { margin: 0; font-size: 1.9rem; font-weight: 800; letter-spacing: -0.01em; }
+.stamp {
+  border: 3px solid var(--accent-healthy); color: var(--accent-healthy);
+  background: rgba(47,143,122,0.08); transform: rotate(-4deg); padding: 0.4rem 0.9rem;
+  font-family: var(--mono); font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; border-radius: 4px; font-size: 0.75rem; white-space: nowrap;
+}
+.totals { display: flex; gap: 0.75rem; max-width: 1100px; margin: 1.5rem auto 1rem; flex-wrap: wrap; }
+.total-chip {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px; padding: 0.5rem 0.9rem; display: flex; align-items: baseline; gap: 0.4rem;
+}
+.total-chip.alert { border-color: var(--accent-alert); background: rgba(184,65,43,0.15); }
+.total-chip .num { font-family: var(--mono); font-weight: 700; font-size: 1.1rem; }
+.total-chip .label { font-size: 0.75rem; color: #A9BDBA; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.reconstruction-note {
+  max-width: 1100px; margin: 0.8rem auto 0; font-size: 0.8rem; color: #C9D8D5; font-style: italic;
+}
+
+#filter {
+  max-width: 1100px; width: 100%; display: block; margin: 0 auto; padding: 0.65rem 0.9rem;
+  border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06);
+  color: var(--paper-raised); font-family: var(--sans); font-size: 0.95rem;
+}
+#filter::placeholder { color: #8FA6A2; }
+
+main { max-width: 1100px; margin: 2rem auto; padding: 0 2rem; }
+
+.consignment { margin-bottom: 2.5rem; }
+.consignment-title {
+  font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 800;
+  border-bottom: 2px dashed var(--line); padding-bottom: 0.5rem; margin-bottom: 1.2rem;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.crate-mark { color: var(--ink-soft); font-family: var(--mono); font-weight: 400; }
+
+.coverage-box {
+  display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap;
+  margin: -0.6rem 0 1.1rem; font-size: 0.82rem; color: var(--ink-soft);
+}
+.coverage-summary { font-family: var(--mono); }
+.coverage-detail summary { cursor: pointer; color: var(--accent-qa); }
+.coverage-detail[open] summary { margin-bottom: 0.3rem; }
+.coverage-detail ul { margin: 0 0 0 1.1rem; padding: 0; }
+.coverage-detail li { list-style: disc; font-family: var(--mono); font-size: 0.9em; }
+
+.port { margin-bottom: 1.4rem; }
+.port-label {
+  display: inline-block; font-family: var(--mono); text-transform: uppercase; font-size: 0.72rem;
+  letter-spacing: 0.08em; font-weight: 700; color: #fff; padding: 0.2rem 0.6rem; border-radius: 3px;
+  margin-bottom: 0.7rem;
+}
+.env-dev { background: var(--accent-dev); }
+.env-systest { background: var(--accent-systest); }
+.env-qa { background: var(--accent-qa); }
+.env-prod { background: var(--accent-prod); }
+.env-other { background: var(--ink-soft); }
+
+.cluster-grid { display: flex; flex-direction: column; gap: 0.9rem; }
+.cluster-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; }
+.cluster-card-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.platform-badge {
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+  padding: 0.15rem 0.45rem; border-radius: 3px; color: #fff;
+}
+.platform-ecs { background: #2C5F7C; }
+.platform-eks { background: #4B3F72; }
+.cluster-name { font-weight: 700; text-decoration: none; }
+.cluster-name:hover { text-decoration: underline; }
+.region-tag { font-family: var(--mono); font-size: 0.75rem; color: var(--ink-soft); }
+
+.warning {
+  color: var(--accent-alert); background: rgba(184,65,43,0.08); border: 1px solid rgba(184,65,43,0.3);
+  padding: 0.5rem 0.7rem; border-radius: 6px; font-size: 0.85rem; margin: 0 0 0.6rem;
+}
+.empty { color: var(--ink-soft); font-style: italic; margin: 0.4rem 0 0; }
+
+.table-wrap { overflow-x: auto; }
+.service-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.service-table th {
+  text-align: left; font-family: var(--mono); text-transform: uppercase; font-size: 0.68rem;
+  letter-spacing: 0.05em; color: var(--ink-soft); border-bottom: 1px solid var(--line); padding: 0.4rem 0.5rem;
+}
+.service-table td { padding: 0.45rem 0.5rem; border-bottom: 1px solid rgba(185,198,196,0.5); vertical-align: middle; }
+.service-table tr:last-child td { border-bottom: none; }
+.mono { font-family: var(--mono); }
+.dim { color: var(--ink-soft); }
+.container-name { color: var(--ink-soft); font-size: 0.85em; }
+
+.waybill {
+  font-family: var(--mono); background: #fff; border: 1px dashed var(--ink-soft);
+  padding: 0.1rem 0.4rem; border-radius: 3px; text-decoration: none; font-size: 0.85em;
+}
+.waybill:hover { border-style: solid; }
+.unverified { font-family: var(--mono); font-size: 0.7rem; color: var(--accent-qa); margin-left: 0.2rem; cursor: help; }
+
+.jira-badge {
+  font-family: var(--mono); background: #fff; border: 1px dashed var(--accent-dev); color: var(--accent-dev);
+  padding: 0.1rem 0.4rem; border-radius: 3px; text-decoration: none; font-size: 0.8em; margin-left: 0.2rem;
+}
+.jira-badge:hover { border-style: solid; }
+.nexus-link { font-size: 0.78rem; white-space: nowrap; margin-left: 0.4rem; }
+.base-image-note { font-size: 0.72rem; display: inline-block; margin-top: 0.1rem; }
+
+.health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.35rem; }
+.health-dot.ok { background: var(--accent-healthy); }
+.health-dot.drift { background: var(--accent-alert); }
+
+.console-link { font-size: 0.82rem; white-space: nowrap; }
+
+/* history / timeline view */
+.service-block { margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px dashed var(--line); }
+.service-block:first-of-type { margin-top: 0.6rem; padding-top: 0; border-top: none; }
+.service-name { font-weight: 700; margin: 0 0 0.5rem; font-size: 0.92rem; }
+.timeline { list-style: none; margin: 0; padding: 0; }
+.leg {
+  border-left: 2px solid var(--line); padding: 0.3rem 0 0.3rem 0.8rem; margin-bottom: 0.35rem; position: relative;
+}
+.leg::before {
+  content: ''; position: absolute; left: -5px; top: 0.55rem; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--ink-soft);
+}
+.leg-current { border-left-color: var(--accent-healthy); }
+.leg-current::before { background: var(--accent-healthy); }
+.leg-dates { font-size: 0.78rem; color: var(--ink-soft); margin-bottom: 0.15rem; }
+.leg-badge {
+  display: inline-block; margin-left: 0.4rem; font-family: var(--mono); font-size: 0.65rem;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-healthy);
+  border: 1px solid var(--accent-healthy); border-radius: 3px; padding: 0 0.3rem;
+}
+.leg-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; flex-wrap: wrap; }
+
+.xref-block { margin: 0.5rem 0 0.3rem 0.8rem; padding-left: 0.6rem; border-left: 2px dotted var(--line); }
+.xref-label {
+  font-family: var(--mono); text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.06em;
+  color: var(--ink-soft); margin: 0 0 0.25rem;
+}
+.xref-list { list-style: none; margin: 0; padding: 0; }
+.xref-list li {
+  font-size: 0.82rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.12rem 0;
+}
+.xref-status {
+  font-family: var(--mono); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0 0.3rem; border-radius: 3px; color: #fff; background: var(--ink-soft);
+}
+.xref-status-success, .xref-status-succeeded { background: var(--accent-healthy); }
+.xref-status-failed, .xref-status-aborted, .xref-status-errored { background: var(--accent-alert); }
+
+footer { max-width: 1100px; margin: 2rem auto 0; padding: 0 2rem; color: var(--ink-soft); font-size: 0.8rem; }
+footer p + p { margin-top: 0.5rem; }
+
+@media (max-width: 640px) {
+  .manifest-header { padding: 1.5rem 1.2rem; }
+  main, footer { padding: 0 1.2rem; }
+  h1 { font-size: 1.4rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="manifest-header">
+  <div class="header-top">
+    <div>
+      <p class="eyebrow">Deployment Manifest</p>
+      <h1>What's actually running, where</h1>
+    </div>
+    <div class="stamp">Generated 2026-07-15 02:57 UTC</div>
+  </div>
+  <div class="totals">
+    <div class="total-chip"><span class="num">5</span><span class="label">clusters</span></div>
+    <div class="total-chip"><span class="num">4</span><span class="label">services</span></div>
+    <div class="total-chip alert"><span class="num">1</span><span class="label">desired &ne; running</span></div>
+  </div>
+  
+  <input id="filter" type="search" placeholder="Filter by team, cluster, service, tag, or commit&hellip;" aria-label="Filter report">
+</header>
+
+<main>
+  
+  <section class="consignment">
+    <h2 class="consignment-title"><span class="crate-mark">//</span> Checkout</h2>
+    
+    
+    <div class="coverage-box">
+      <span class="coverage-summary">0/1 registered repos seen deployed</span>
+      
+      <details class="coverage-detail"><summary>1 registered, not deployed anywhere in this report</summary>
+        <ul><li>example-org/checkout-web</li></ul>
+      </details>
+      
+      
+      <details class="coverage-detail"><summary>1 deployed, not in the team registry</summary>
+        <ul><li>example-org/cart-service</li></ul>
+      </details>
+      
+    </div>
+    
+    
+    <div class="port">
+      <h3 class="port-label env-prod">production</h3>
+      <div class="cluster-grid">
+        
+        <article class="cluster-card" data-search="checkout production eks checkout-prod">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-eks">EKS</span>
+            
+            <a class="cluster-name" href="https://us-west-2.console.aws.amazon.com/eks/home?region=us-west-2#/clusters/checkout-prod" target="_blank" rel="noopener">checkout-prod</a>
+            
+            <span class="region-tag">us-west-2</span>
+          </header>
+
+          
+          <p class="warning">&#9888; could not list deployments in checkout-prod (check aws-auth / access entries): Unauthorized</p>
+          
+
+          
+          <p class="empty">No services/deployments found.</p>
+          
+        </article>
+        
+      </div>
+    </div>
+    
+    <div class="port">
+      <h3 class="port-label env-qa">qa</h3>
+      <div class="cluster-grid">
+        
+        <article class="cluster-card" data-search="checkout qa eks checkout-qa checkout/cart-service v2.3.0-g4c5d6e7 4c5d6e7 fix currency rounding on split-tender orders marcus t.">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-eks">EKS</span>
+            
+            <a class="cluster-name" href="https://us-west-2.console.aws.amazon.com/eks/home?region=us-west-2#/clusters/checkout-qa" target="_blank" rel="noopener">checkout-qa</a>
+            
+            <span class="region-tag">us-west-2</span>
+          </header>
+
+          
+
+          
+          <div class="table-wrap">
+            <table class="service-table">
+              <thead>
+                <tr><th>Service</th><th>Image tag</th><th>Commit</th><th>Health</th><th></th></tr>
+              </thead>
+              <tbody>
+                
+                
+                <tr>
+                  <td>checkout/cart-service<span class="container-name"> / cart-service</span></td>
+                  <td class="mono">
+                    v2.3.0-g4c5d6e7
+                    
+                  </td>
+                  <td>
+                    
+                    <a class="waybill" href="https://github.com/example-org/example-repo/commit/4c5d6e7f8a9b0123c4d5e6f7a8b9c0d1e2f3a4b5" target="_blank" rel="noopener"
+                       title="Fix currency rounding on split-tender orders &mdash; Marcus T.">4c5d6e7</a>
+                    
+                  </td>
+                  <td>
+                    
+                    
+                    <span class="health-dot ok"></span><span class="mono">3/3</span>
+                    
+                  </td>
+                  <td></td>
+                </tr>
+                
+                
+              </tbody>
+            </table>
+          </div>
+          
+        </article>
+        
+      </div>
+    </div>
+    
+  </section>
+  
+  <section class="consignment">
+    <h2 class="consignment-title"><span class="crate-mark">//</span> Payments</h2>
+    
+    
+    <div class="coverage-box">
+      <span class="coverage-summary">1/2 registered repos seen deployed</span>
+      
+      <details class="coverage-detail"><summary>1 registered, not deployed anywhere in this report</summary>
+        <ul><li>example-org/payments-worker</li></ul>
+      </details>
+      
+      
+    </div>
+    
+    
+    <div class="port">
+      <h3 class="port-label env-dev">dev</h3>
+      <div class="cluster-grid">
+        
+        <article class="cluster-card" data-search="payments dev ecs payments-dev payments-api a1b2c3d a1b2c3d team-1856: add idempotency key support to charge endpoint priya n. team-1856 add idempotency key support to charge endpoint">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-ecs">ECS</span>
+            
+            <a class="cluster-name" href="https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/payments-dev/services?region=us-east-1" target="_blank" rel="noopener">payments-dev</a>
+            
+            <span class="region-tag">us-east-1</span>
+          </header>
+
+          
+
+          
+          <div class="table-wrap">
+            <table class="service-table">
+              <thead>
+                <tr><th>Service</th><th>Image tag</th><th>Commit</th><th>Health</th><th></th></tr>
+              </thead>
+              <tbody>
+                
+                
+                <tr>
+                  <td>payments-api<span class="container-name"> / app</span></td>
+                  <td class="mono">
+                    a1b2c3d<a class="nexus-link" href="https://nexus.example.com/repository/team-images/v2/payments-api/manifests/a1b2c3d" target="_blank" rel="noopener">nexus &#8599;</a>
+                    
+                    <br><span class="dim base-image-note">base: nexus.example.com/base-images/python:3.11-slim</span>
+                    
+                  </td>
+                  <td>
+                    
+                    <a class="waybill" href="https://github.com/example-org/example-repo/commit/a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" target="_blank" rel="noopener"
+                       title="TEAM-1856: Add idempotency key support to charge endpoint &mdash; Priya N.">a1b2c3d</a><a class="jira-badge" href="https://example.atlassian.net/browse/TEAM-1856" target="_blank" rel="noopener" title="Add idempotency key support to charge endpoint &mdash; Done">TEAM-1856</a>
+                    
+                  </td>
+                  <td>
+                    
+                    
+                    <span class="health-dot ok"></span><span class="mono">2/2</span>
+                    
+                  </td>
+                  <td><a class="console-link" href="https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/payments-dev/services/payments-api/health?region=us-east-1" target="_blank" rel="noopener">console &#8599;</a></td>
+                </tr>
+                
+                
+              </tbody>
+            </table>
+          </div>
+          
+        </article>
+        
+      </div>
+    </div>
+    
+    <div class="port">
+      <h3 class="port-label env-prod">production</h3>
+      <div class="cluster-grid">
+        
+        <article class="cluster-card" data-search="payments production ecs payments-prod payments-api 9f8e7d6 9f8e7d6 bump retry backoff for card-network timeouts priya n.">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-ecs">ECS</span>
+            
+            <a class="cluster-name" href="https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/payments-prod/services?region=us-east-1" target="_blank" rel="noopener">payments-prod</a>
+            
+            <span class="region-tag">us-east-1</span>
+          </header>
+
+          
+
+          
+          <div class="table-wrap">
+            <table class="service-table">
+              <thead>
+                <tr><th>Service</th><th>Image tag</th><th>Commit</th><th>Health</th><th></th></tr>
+              </thead>
+              <tbody>
+                
+                
+                <tr>
+                  <td>payments-api<span class="container-name"> / app</span></td>
+                  <td class="mono">
+                    9f8e7d6
+                    
+                  </td>
+                  <td>
+                    
+                    <a class="waybill" href="https://github.com/example-org/example-repo/commit/9f8e7d6c5b4a3921807f6e5d4c3b2a1908f7e6d5" target="_blank" rel="noopener"
+                       title="Bump retry backoff for card-network timeouts &mdash; Priya N.">9f8e7d6</a>
+                    
+                  </td>
+                  <td>
+                    
+                    
+                    <span class="health-dot drift"></span><span class="mono">4/6</span>
+                    
+                  </td>
+                  <td><a class="console-link" href="https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/payments-prod/services/payments-api/health?region=us-east-1" target="_blank" rel="noopener">console &#8599;</a></td>
+                </tr>
+                
+                
+              </tbody>
+            </table>
+          </div>
+          
+        </article>
+        
+      </div>
+    </div>
+    
+  </section>
+  
+  <section class="consignment">
+    <h2 class="consignment-title"><span class="crate-mark">//</span> Platform</h2>
+    
+    
+    <div class="coverage-box">
+      <span class="coverage-summary">1/1 registered repos seen deployed</span>
+      
+      
+    </div>
+    
+    
+    <div class="port">
+      <h3 class="port-label env-systest">systest</h3>
+      <div class="cluster-grid">
+        
+        <article class="cluster-card" data-search="platform systest ecs platform-systest auth-service build-482-1a2b3c4 1a2b3c4 rotate signing keys on a 24h schedule dana w.">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-ecs">ECS</span>
+            
+            <a class="cluster-name" href="https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/platform-systest/services?region=us-east-1" target="_blank" rel="noopener">platform-systest</a>
+            
+            <span class="region-tag">us-east-1</span>
+          </header>
+
+          
+
+          
+          <div class="table-wrap">
+            <table class="service-table">
+              <thead>
+                <tr><th>Service</th><th>Image tag</th><th>Commit</th><th>Health</th><th></th></tr>
+              </thead>
+              <tbody>
+                
+                
+                <tr>
+                  <td>auth-service<span class="container-name"> / app</span></td>
+                  <td class="mono">
+                    build-482-1a2b3c4
+                    
+                  </td>
+                  <td>
+                    
+                    <a class="waybill" href="https://github.com/example-org/example-repo/commit/1a2b3c4d5e6f7081920a3b4c5d6e7f8091a2b3c4" target="_blank" rel="noopener"
+                       title="Rotate signing keys on a 24h schedule &mdash; Dana W.">1a2b3c4</a>
+                    
+                  </td>
+                  <td>
+                    
+                    
+                    <span class="health-dot ok"></span><span class="mono">1/1</span>
+                    
+                  </td>
+                  <td><a class="console-link" href="https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/platform-systest/services/auth-service/health?region=us-east-1" target="_blank" rel="noopener">console &#8599;</a></td>
+                </tr>
+                
+                
+              </tbody>
+            </table>
+          </div>
+          
+        </article>
+        
+      </div>
+    </div>
+    
+  </section>
+  
+</main>
+
+<footer>
+  <p>Commit links are derived from each deployed image tag using a best-effort SHA match &mdash; a <code>?</code> next to a commit means it couldn't be verified against the GitHub API (no token configured, private repo, or rate-limited). Verify before treating this as an audit record.</p>
+  
+</footer>
+
+<script>
+  var input = document.getElementById('filter');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.cluster-card'));
+  var ports = Array.prototype.slice.call(document.querySelectorAll('.port'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.consignment'));
+
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    cards.forEach(function (card) {
+      var match = !q || card.dataset.search.indexOf(q) !== -1;
+      card.style.display = match ? '' : 'none';
+    });
+    ports.forEach(function (port) {
+      var anyVisible = Array.prototype.slice.call(port.querySelectorAll('.cluster-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      port.style.display = anyVisible ? '' : 'none';
+    });
+    sections.forEach(function (section) {
+      var anyVisible = Array.prototype.slice.call(section.querySelectorAll('.cluster-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      section.style.display = anyVisible ? '' : 'none';
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment History</title>
+{% include "_base_styles.html" %}
+</head>
+<body>
+
+<header class="manifest-header">
+  <div class="header-top">
+    <div>
+      <p class="eyebrow">Deployment History</p>
+      <h1>What shipped, and when</h1>
+    </div>
+    <div class="stamp">{{ range_label }}</div>
+  </div>
+  <div class="totals">
+    <div class="total-chip"><span class="num">{{ totals.clusters }}</span><span class="label">clusters</span></div>
+    <div class="total-chip"><span class="num">{{ totals.services }}</span><span class="label">services</span></div>
+    <div class="total-chip"><span class="num">{{ totals.legs }}</span><span class="label">revisions in range</span></div>
+  </div>
+  <input id="filter" type="search" placeholder="Filter by team, cluster, service, tag, or commit&hellip;" aria-label="Filter report">
+</header>
+
+<main>
+  {% for team, envs in grouped.items() %}
+  <section class="consignment">
+    <h2 class="consignment-title"><span class="crate-mark">//</span> {{ team }}</h2>
+    {% if coverage.get(team) %}
+    {% set cov = coverage[team] %}
+    <div class="coverage-box">
+      <span class="coverage-summary">{{ cov.deployed_count }}/{{ cov.registered_count }} registered repos seen deployed</span>
+      {% if cov.missing %}
+      <details class="coverage-detail"><summary>{{ cov.missing|length }} registered, not deployed anywhere in this window</summary>
+        <ul>{% for r in cov.missing %}<li>{{ r }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+      {% if cov.unregistered %}
+      <details class="coverage-detail"><summary>{{ cov.unregistered|length }} deployed, not in the team registry</summary>
+        <ul>{% for r in cov.unregistered %}<li>{{ r }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% for environment, clusters in envs.items() %}
+    <div class="port">
+      <h3 class="port-label {{ env_class(environment) }}">{{ environment }}</h3>
+      <div class="cluster-grid">
+        {% for cluster in clusters %}
+        <article class="cluster-card" data-search="{{ cluster._search }}">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-{{ cluster.platform|lower }}">{{ cluster.platform }}</span>
+            {% if cluster.console_url %}
+            <a class="cluster-name" href="{{ cluster.console_url }}" target="_blank" rel="noopener">{{ cluster.name }}</a>
+            {% else %}
+            <span class="cluster-name">{{ cluster.name }}</span>
+            {% endif %}
+            <span class="region-tag">{{ cluster.region }}</span>
+          </header>
+
+          {% if cluster.warning %}
+          <p class="warning">&#9888; {{ cluster.warning }}</p>
+          {% endif %}
+
+          {% if cluster.services %}
+            {% for service in cluster.services %}
+            <div class="service-block">
+              <p class="service-name">{{ service.name }}</p>
+              {% if service.warning %}
+              <p class="warning">&#9888; {{ service.warning }}</p>
+              {% endif %}
+              {% if service.timeline %}
+              <ol class="timeline">
+                {% for leg in service.timeline|reverse %}
+                <li class="leg {{ 'leg-current' if leg.current else '' }}">
+                  <div class="leg-dates">
+                    {{ leg.start_label }} &rarr; {{ leg.end_label }}
+                    {% if leg.current %}<span class="leg-badge">current</span>{% endif %}
+                  </div>
+                  {% for container in leg.containers %}
+                  <div class="leg-row">
+                    <span class="mono">{{ container.tag }}</span>
+                    {% if container.nexus and container.nexus.asset_url %}<a class="nexus-link" href="{{ container.nexus.asset_url }}" target="_blank" rel="noopener">nexus &#8599;</a>{% endif %}
+                    {% if container.nexus and container.nexus.base_image and (container.nexus.base_image.name or container.nexus.base_image.digest) %}
+                    <span class="dim base-image-note">base: {{ container.nexus.base_image.name or container.nexus.base_image.digest }}</span>
+                    {% endif %}
+                    {% if container.commit %}
+                    <a class="waybill" href="{{ container.commit.url }}" target="_blank" rel="noopener"
+                       title="{{ container.commit.message or 'unverified' }}{% if container.commit.author %} &mdash; {{ container.commit.author }}{% endif %}">{{ container.commit.short_sha }}</a>{% if not container.commit.verified %}<span class="unverified" title="Could not verify against the GitHub API">?</span>{% endif %}{% for j in container.commit.jira or [] %}<a class="jira-badge" href="{{ j.url }}" target="_blank" rel="noopener" title="{{ j.summary or '' }}{% if j.status %} &mdash; {{ j.status }}{% endif %}">{{ j.key }}</a>{% endfor %}
+                    {% else %}
+                    <span class="mono dim">&mdash;</span>
+                    {% endif %}
+                    {% if container.name %}<span class="container-name">{{ container.name }}</span>{% endif %}
+                  </div>
+                  {% endfor %}
+                </li>
+                {% endfor %}
+              </ol>
+              {% else %}
+              <p class="empty">No revisions found in this window.</p>
+              {% endif %}
+
+              {% if service.harness_executions %}
+              <div class="xref-block">
+                <p class="xref-label">Harness executions in this window</p>
+                <ul class="xref-list">
+                  {% for ex in service.harness_executions %}
+                  <li>
+                    <span class="mono">{{ ex.started_at_label }}</span>
+                    <span>{{ ex.pipeline_name }}</span>
+                    {% if ex.artifact_versions %}<span class="mono dim">{{ ex.artifact_versions|join(', ') }}</span>{% endif %}
+                    {% if ex.status %}<span class="xref-status xref-status-{{ ex.status|lower }}">{{ ex.status }}</span>{% endif %}
+                    {% if ex.triggered_by %}<span class="dim">by {{ ex.triggered_by }}</span>{% endif %}
+                    {% if ex.execution_url %}<a href="{{ ex.execution_url }}" target="_blank" rel="noopener">view &#8599;</a>{% endif %}
+                  </li>
+                  {% endfor %}
+                </ul>
+              </div>
+              {% elif service.harness_error %}
+              <p class="warning">&#9888; Harness lookup failed: {{ service.harness_error }}</p>
+              {% endif %}
+
+              {% if service.newrelic_markers %}
+              <div class="xref-block">
+                <p class="xref-label">New Relic deployment markers in this window</p>
+                <ul class="xref-list">
+                  {% for m in service.newrelic_markers %}
+                  <li>
+                    <span class="mono">{{ m.timestamp_label }}</span>
+                    {% if m.version %}<span class="mono">{{ m.version }}</span>{% endif %}
+                    {% if m.user %}<span class="dim">by {{ m.user }}</span>{% endif %}
+                    {% if m.deep_link %}<a href="{{ m.deep_link }}" target="_blank" rel="noopener">view &#8599;</a>{% endif %}
+                  </li>
+                  {% endfor %}
+                </ul>
+              </div>
+              {% elif service.newrelic_error %}
+              <p class="warning">&#9888; New Relic lookup failed: {{ service.newrelic_error }}</p>
+              {% endif %}
+            </div>
+            {% endfor %}
+          {% else %}
+          <p class="empty">No services/deployments found.</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</main>
+
+<footer>
+  <p>Timelines are reconstructed from each platform's own revision history &mdash; ECS task definition revisions (stamped with their registration time) and EKS ReplicaSet history &mdash; using that timestamp as a proxy for "went live". That holds in typical CI/CD flows where register-and-deploy happen together, but isn't a guaranteed audit record of the actual deploy action. A service deleted before this report was generated won't appear, even if it was live during part of this window. A <code>?</code> next to a commit means it couldn't be verified against the GitHub API.</p>
+  <p>Where configured, Harness executions and New Relic deployment markers are shown alongside each service's timeline as independent corroborating evidence, not merged into it &mdash; use them to sanity-check the reconstructed dates rather than as the primary record.</p>
+</footer>
+
+<script>
+  var input = document.getElementById('filter');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.cluster-card'));
+  var ports = Array.prototype.slice.call(document.querySelectorAll('.port'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.consignment'));
+
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    cards.forEach(function (card) {
+      var match = !q || card.dataset.search.indexOf(q) !== -1;
+      card.style.display = match ? '' : 'none';
+    });
+    ports.forEach(function (port) {
+      var anyVisible = Array.prototype.slice.call(port.querySelectorAll('.cluster-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      port.style.display = anyVisible ? '' : 'none';
+    });
+    sections.forEach(function (section) {
+      var anyVisible = Array.prototype.slice.call(section.querySelectorAll('.cluster-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      section.style.display = anyVisible ? '' : 'none';
+    });
+  });
+</script>
+</body>
+</html>

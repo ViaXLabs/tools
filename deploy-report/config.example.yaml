@@ -1,0 +1,138 @@
+# Deployment Manifest Generator -- example configuration.
+# Copy this to config.yaml and adjust for your environment:
+#   cp config.example.yaml config.yaml
+
+aws:
+  profiles:
+    - name: default            # AWS CLI profile name (or omit for default creds/instance role)
+      regions:
+        - us-east-1
+        - us-west-2
+    # Example second entry for a separate/cross-account setup, e.g. one
+    # AWS account per environment -- add one block per account:
+    # - name: prod-account             # arbitrary label, shown in progress logs
+    #   base_profile: default          # local profile used to call sts:AssumeRole
+    #   role_arn: arn:aws:iam::123456789012:role/DeploymentReportReadOnly
+    #   regions:
+    #     - us-east-1
+
+tags:
+  # Case-insensitive tag KEYS (not values) to read off each cluster.
+  # Change these to match your existing tagging convention.
+  team_key: Team
+  environment_key: Environment
+
+eks:
+  enabled: true
+  # Only needed if a cluster's kubeconfig context name should differ
+  # from the EKS cluster name itself:
+  kubeconfig_context_overrides: {}
+  #   my-eks-cluster-name: my-preferred-context-alias
+
+github:
+  default_org: my-github-org
+  token_env_var: GITHUB_TOKEN     # optional; raises API rate limit from 60/hr to 5000/hr
+                                   # export GITHUB_TOKEN=ghp_xxx before running
+
+  # Override when an image/ECR-repo name doesn't match the GitHub repo name:
+  repo_overrides: {}
+  #   payments-api: my-github-org/payments-service
+
+  # Optional regex (must have one capture group) if your tags don't follow
+  # the built-in conventions ("abc1234" or "v1.2.3-gabc1234"). Example for
+  # tags like "build-142-a1b2c3d":
+  # tag_sha_pattern: 'build-\d+-([0-9a-f]{7,40})'
+  tag_sha_pattern: null
+
+  # Optional: an authoritative team -> [repo, ...] registry, cross-checked
+  # against what's actually deployed to flag gaps in either direction
+  # (registered repos never seen deployed, or deployed repos nobody
+  # registered). Applies to every mode. Leave static_file unset / mode
+  # unset to skip this entirely.
+  team_registry:
+    mode: static             # or: github_topics
+    static_file: teams.json  # a plain {"Team": ["org/repo", ...]} file -- see teams.example.json
+    # --- used when mode: github_topics instead ---
+    org: my-github-org
+    team_topic_prefix: "team-"   # a repo tagged "team-payments" -> team "Payments"
+    required_topic: null         # e.g. "deploy-tracked", to opt repos in explicitly
+    team_name_overrides: {}
+    #   team-cx: Customer Experience
+
+output:
+  path: deploy-report.html
+
+history:
+  # Used by --mode history when --start-date isn't given, and by
+  # --mode asof when --lookback-days isn't given.
+  default_lookback_days: 90
+
+# Optional: cross-check the ECS/EKS-derived timeline against Harness's own
+# pipeline execution history. Only used by --mode history. Leave
+# enabled: false if you don't want this (no extra AWS/GitHub behavior
+# changes either way).
+harness:
+  enabled: false
+  account_id: "YOUR_HARNESS_ACCOUNT_ID"
+  api_key_env_var: HARNESS_API_KEY   # export HARNESS_API_KEY=... before running
+  base_url: https://app.harness.io    # change if self-hosted
+  # One entry per Harness org/project your services are deployed from.
+  # The script queries every scope for every service and merges results.
+  scopes:
+    - org_id: default
+      project_id: YOUR_PROJECT_ID
+  # Override when a Harness Service/Environment identifier doesn't match
+  # the ECS/EKS service name or environment tag value:
+  service_id_overrides: {}
+  #   payments-api: payments_api_svc
+  environment_id_overrides: {}
+  #   production: prod
+
+# Optional: cross-check against New Relic deployment markers via NRQL.
+# Only used by --mode history.
+newrelic:
+  enabled: false
+  account_id: 0  # your New Relic account ID (a number)
+  api_key_env_var: NEW_RELIC_API_KEY   # a User API key (starts with NRAK-)
+  region: us   # or eu, if your account is in the EU data center
+  # Deployment markers can land in one of two event types depending on how
+  # your pipelines report them -- see README for how to tell which:
+  event_type: Deployment   # or: changeTrackingEvent
+  entity_attribute: entity.name   # or: appName, entity.guid -- whichever your account uses
+  # Override when the New Relic entity name doesn't match "<service>",
+  # keyed by "<service-name>/<environment>":
+  entity_name_overrides: {}
+  #   payments-api/production: payments-api-prod
+
+# Optional: link each deployed image to its record in Nexus, and
+# (optionally) show its base image if your build pipeline records one via
+# the standard OCI annotations. Applies to all modes.
+nexus:
+  enabled: false
+  base_url: https://nexus.yourcompany.com
+  username_env_var: NEXUS_USERNAME
+  password_env_var: NEXUS_PASSWORD
+  # Nexus commonly exposes one port per Docker repo -- map the registry
+  # host:port that shows up in your deployed image URIs to the Nexus
+  # repository name that serves it:
+  registry_repository_map: {}
+  #   "nexus.yourcompany.com:8082": release-images
+  #   "nexus.yourcompany.com:8083": team-images
+  # Off by default: reads the image manifest for the OCI
+  # org.opencontainers.image.base.name / .base.digest annotations. Only
+  # finds something if your build sets these (e.g. via BuildKit) --
+  # plain `docker build` usually doesn't.
+  detect_base_image: false
+
+# Optional: link Jira issues referenced in commit messages (e.g.
+# "TEAM-1856: fix the thing"), by extracting anything matching the
+# standard KEY-123 pattern. No credentials needed for the link itself.
+jira:
+  enabled: false
+  base_url: https://yourcompany.atlassian.net   # or your Jira Server/Data Center URL
+  # Off by default: fetch each issue's live summary/status via the Jira
+  # REST API (adds a request per unique issue referenced). Needs an
+  # Atlassian Cloud API token -- see README for Data Center auth instead.
+  fetch_details: false
+  email_env_var: JIRA_EMAIL
+  api_token_env_var: JIRA_API_TOKEN

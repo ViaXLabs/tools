@@ -1,0 +1,14 @@
+{
+  "Payments": [
+    "example-org/payments-api",
+    "example-org/payments-worker"
+  ],
+  "Checkout": [
+    "example-org/cart-service",
+    "example-org/checkout-web"
+  ],
+  "Platform": [
+    "example-org/auth-service",
+    "example-org/shared-libs"
+  ]
+}

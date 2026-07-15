@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment Manifest</title>
+{% include "_base_styles.html" %}
+</head>
+<body>
+
+<header class="manifest-header">
+  <div class="header-top">
+    <div>
+      <p class="eyebrow">Deployment Manifest</p>
+      <h1>What's actually running, where</h1>
+    </div>
+    <div class="stamp">{{ snapshot_label or ('Generated ' ~ generated_at) }}</div>
+  </div>
+  <div class="totals">
+    <div class="total-chip"><span class="num">{{ totals.clusters }}</span><span class="label">clusters</span></div>
+    <div class="total-chip"><span class="num">{{ totals.services }}</span><span class="label">services</span></div>
+    <div class="total-chip {{ 'alert' if totals.drifted else '' }}"><span class="num">{{ totals.drifted }}</span><span class="label">desired &ne; running</span></div>
+  </div>
+  {% if snapshot_label %}
+  <p class="reconstruction-note">Reconstructed from deployment history, not a live scan &mdash; see the note at the bottom of this report.</p>
+  {% endif %}
+  <input id="filter" type="search" placeholder="Filter by team, cluster, service, tag, or commit&hellip;" aria-label="Filter report">
+</header>
+
+<main>
+  {% for team, envs in grouped.items() %}
+  <section class="consignment">
+    <h2 class="consignment-title"><span class="crate-mark">//</span> {{ team }}</h2>
+    {% if coverage.get(team) %}
+    {% set cov = coverage[team] %}
+    <div class="coverage-box">
+      <span class="coverage-summary">{{ cov.deployed_count }}/{{ cov.registered_count }} registered repos seen deployed</span>
+      {% if cov.missing %}
+      <details class="coverage-detail"><summary>{{ cov.missing|length }} registered, not deployed anywhere in this report</summary>
+        <ul>{% for r in cov.missing %}<li>{{ r }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+      {% if cov.unregistered %}
+      <details class="coverage-detail"><summary>{{ cov.unregistered|length }} deployed, not in the team registry</summary>
+        <ul>{% for r in cov.unregistered %}<li>{{ r }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% for environment, clusters in envs.items() %}
+    <div class="port">
+      <h3 class="port-label {{ env_class(environment) }}">{{ environment }}</h3>
+      <div class="cluster-grid">
+        {% for cluster in clusters %}
+        <article class="cluster-card" data-search="{{ cluster._search }}">
+          <header class="cluster-card-head">
+            <span class="platform-badge platform-{{ cluster.platform|lower }}">{{ cluster.platform }}</span>
+            {% if cluster.console_url %}
+            <a class="cluster-name" href="{{ cluster.console_url }}" target="_blank" rel="noopener">{{ cluster.name }}</a>
+            {% else %}
+            <span class="cluster-name">{{ cluster.name }}</span>
+            {% endif %}
+            <span class="region-tag">{{ cluster.region }}</span>
+          </header>
+
+          {% if cluster.warning %}
+          <p class="warning">&#9888; {{ cluster.warning }}</p>
+          {% endif %}
+
+          {% if cluster.services %}
+          <div class="table-wrap">
+            <table class="service-table">
+              <thead>
+                <tr><th>Service</th><th>Image tag</th><th>Commit</th><th>Health</th><th></th></tr>
+              </thead>
+              <tbody>
+                {% for service in cluster.services %}
+                {% for container in service.containers %}
+                <tr>
+                  <td>{{ service.name }}{% if container.name and container.name != service.name %}<span class="container-name"> / {{ container.name }}</span>{% endif %}</td>
+                  <td class="mono">
+                    {{ container.tag }}{% if container.nexus and container.nexus.asset_url %}<a class="nexus-link" href="{{ container.nexus.asset_url }}" target="_blank" rel="noopener">nexus &#8599;</a>{% endif %}
+                    {% if container.nexus and container.nexus.base_image and (container.nexus.base_image.name or container.nexus.base_image.digest) %}
+                    <br><span class="dim base-image-note">base: {{ container.nexus.base_image.name or container.nexus.base_image.digest }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if container.commit %}
+                    <a class="waybill" href="{{ container.commit.url }}" target="_blank" rel="noopener"
+                       title="{{ container.commit.message or 'unverified' }}{% if container.commit.author %} &mdash; {{ container.commit.author }}{% endif %}">{{ container.commit.short_sha }}</a>{% if not container.commit.verified %}<span class="unverified" title="Could not verify against the GitHub API">?</span>{% endif %}{% for j in container.commit.jira or [] %}<a class="jira-badge" href="{{ j.url }}" target="_blank" rel="noopener" title="{{ j.summary or '' }}{% if j.status %} &mdash; {{ j.status }}{% endif %}">{{ j.key }}</a>{% endfor %}
+                    {% else %}
+                    <span class="mono dim">&mdash;</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if service.desired_count is none or service.running_count is none %}
+                    <span class="mono dim">n/a</span>
+                    {% else %}
+                    {% set healthy = (service.desired_count == service.running_count) %}
+                    <span class="health-dot {{ 'ok' if healthy else 'drift' }}"></span><span class="mono">{{ service.running_count }}/{{ service.desired_count }}</span>
+                    {% endif %}
+                  </td>
+                  <td>{% if service.console_url %}<a class="console-link" href="{{ service.console_url }}" target="_blank" rel="noopener">console &#8599;</a>{% endif %}</td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="empty">No services/deployments found.</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</main>
+
+<footer>
+  <p>Commit links are derived from each deployed image tag using a best-effort SHA match &mdash; a <code>?</code> next to a commit means it couldn't be verified against the GitHub API (no token configured, private repo, or rate-limited). Verify before treating this as an audit record.</p>
+  {% if snapshot_label %}
+  <p>This snapshot was reconstructed from each platform's own revision history (ECS task definition revisions / EKS ReplicaSet history) by finding the most recent revision at or before {{ snapshot_label|lower }}. It reflects which image/commit was live, not desired/running task counts at that time &mdash; those aren't retained historically, hence the "n/a" health column.</p>
+  {% endif %}
+</footer>
+
+<script>
+  var input = document.getElementById('filter');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.cluster-card'));
+  var ports = Array.prototype.slice.call(document.querySelectorAll('.port'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.consignment'));
+
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    cards.forEach(function (card) {
+      var match = !q || card.dataset.search.indexOf(q) !== -1;
+      card.style.display = match ? '' : 'none';
+    });
+    ports.forEach(function (port) {
+      var anyVisible = Array.prototype.slice.call(port.querySelectorAll('.cluster-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      port.style.display = anyVisible ? '' : 'none';
+    });
+    sections.forEach(function (section) {
+      var anyVisible = Array.prototype.slice.call(section.querySelectorAll('.cluster-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      section.style.display = anyVisible ? '' : 'none';
+    });
+  });
+</script>
+</body>
+</html>
