@@ -1,0 +1,90 @@
+Yes — and it's actually a clean combination, because the two layers don't compete with each other. They're two independent control loops operating on the same underlying principle (don't remove the old thing until the new thing is verified), just at different layers with different triggers. Here's how they fit together and what makes-or-breaks combining them.
+
+**The two loops, side by side**
+
+*Layer A — service/app (what code is running):* native ECS blue/green, as we covered — task sets, target groups, bake time, alarms. Triggered by deployments. Doesn't know or care which physical hosts it lands on, only that target group health checks pass.
+
+*Layer B — capacity/host fleet (what hardware is running it):* this is where you'd build a genuine blue/green at the instance layer, which is a step up from what your current reroll script does (rolling, one-instance-at-a-time within a single ASG). True blue/green here looks like:
+
+- Two ASG-backed capacity providers registered on the cluster — CP-Blue (active) and CP-Green (idle). With managed scaling on, the idle one's ASG desired count can sit at 0, so it costs nothing between cutovers.
+- Cutover: scale CP-Green's ASG up (new AMI, launch template, instance family — whatever you're refreshing), wait for those instances to register healthy, then shift the capacity provider strategy's weight/base toward CP-Green so new task placements land there.
+- Drain CP-Blue's instances using the exact same mechanics we already discussed — `UpdateContainerInstancesState`/managed instance draining, gated by each service's `minimumHealthyPercent`/`maximumPercent`. Tasks relocate onto Green capacity, health-checked the same way as any other drain.
+- Once CP-Blue shows zero running tasks, scale its ASG to 0. Roles now conceptually swap for next cycle.
+- Rollback, if Green looks bad: shift the strategy weight back to CP-Blue and drain Green. Full-fleet rollback, same idea as service-level bake time, just at the host layer.
+
+This gets you real symmetry: both layers now have "verify before you commit, roll back easily if not" built in — Layer A via bake time, Layer B via keeping Blue warm until you trust Green.
+
+**Where it actually gets tricky — the coupling rules**
+
+This is the part that determines whether combining them is safe or a mess:
+
+1. **Combined headroom.** If a service's bake time happens to overlap with a Layer B cutover, you could transiently need up to ~2x task capacity *and* ~2x host capacity at the same moment. Either size the capacity providers' managed-scaling ceiling to genuinely absorb that worst case, or avoid letting them overlap by design (next point).
+2. **Gate Layer B on Layer A's state.** Before your reroll automation drains a cluster's Blue capacity, have it check whether any service on that cluster has an in-flight deployment — `describe-services` showing more than one entry in `deployments`, or a non-terminal rollout state — and hold off, or at minimum treat that overlap as a deliberately tested case rather than something that happens by accident at 3am.
+3. **Actually test the collision case once.** Drain a host that's currently running one side of an active, mid-bake-time blue/green task set, in non-prod, and confirm ECS relocates those tasks cleanly without disturbing the bake-time verification. I flagged this as worth checking last time as a hypothetical; if you're running both layers concurrently, it stops being optional.
+4. **Don't over-build Layer B for the routine case.** Full dual-capacity-provider blue/green is the right tool for infrequent, higher-stakes host changes — a new AMI or OS baseline, an instance family migration, something you genuinely want a fully-vetted second cohort for before committing the whole fleet. For the *weekly* hygiene reroll specifically, a lighter mechanism — EC2 Auto Scaling's native **Instance Refresh** (rolling replacement within one ASG, respects a minimum healthy percentage) paired with ECS managed instance draining — gets you the same "nothing removed until replacement's confirmed" property without paying for and maintaining a second idle fleet every single week. I'd reserve the heavier dual-CP pattern for the less-frequent, bigger changes, and keep the weekly cadence on the cheaper rolling mechanism, unless you have a specific reason to want full-cohort validation weekly too.
+
+**Cost is worth saying out loud**: true instance-level blue/green means running two (partial or full) fleets during every cutover window. For a once-a-week cadence that adds up in a way it wouldn't for a quarterly AMI overhaul — worth quantifying before committing to the heavier version as your default.
+
+**On the EKS timing**: this composed shape — one loop for "what code," one loop for "what hardware," each with verify-then-commit semantics, coordinated so they don't collide — is exactly what you'll rebuild in EKS anyway (rolling updates/Argo Rollouts for the app layer, managed node group or Karpenter NodePool swaps for the host layer, cordoned/drained the same way). So designing it this way now isn't throwaway work, even the parts that feel ECS-specific.
+
+If it's useful, I'd suggest deciding this per layer rather than defaulting to "blue/green everywhere": Layer A — blue/green now, you've already got the case for it. Layer B — start with rolling instance refresh + managed draining for the weekly cadence, and only stand up the full dual-capacity-provider version if/when a specific change (AMI, instance family) actually calls for it.
+
+
+---
+
+I'd actually steer you away from two clusters here — not because it's impossible, but because it quietly gives back the thing you just gained.
+
+**Why two clusters costs you something specific**
+
+Native ECS blue/green (the deploy-layer piece you liked) is scoped to a single service inside a single cluster — its bake time, lifecycle hooks, alarms, and rollback all operate on the two task sets of *one* service. If Blue and Green become two separate clusters, each side needs its own full copy of every service, and the cutover between them now has to happen externally — at the ALB or DNS layer. At that point you're no longer using native blue/green for deployments at all; you're hand-rolling the same target-group-swap mechanism that native blue/green (and CodeDeploy before it) exists to replace. You'd end up controlling deployment blue/green and capacity blue/green with the *same* lever — which cluster is live — instead of the two independent ones that made this clean in the first place.
+
+There's real duplicated surface, too: two sets of service definitions, task roles, service discovery/Service Connect namespaces, Container Insights config, capacity provider registrations. Your pipeline also now has to know which cluster is "live" before it even knows where to deploy.
+
+**How it actually runs across both ASGs, in one cluster**
+
+1. Associate both capacity providers with the cluster (`PutClusterCapacityProviders`) — a one-time step; a service can only reference a capacity provider already attached to its cluster.
+2. Set a capacityProviderStrategy with weight/base across the two — e.g., base=0, weight=1 on Blue only means "everything new goes to Blue." Put this on the cluster's *default* strategy if you want most services to move together with one change, or per-service if you want independent control.
+3. Key mechanic: weight/base only decides where *new* tasks get placed — it does nothing to tasks already running. Flipping the strategy alone moves nothing.
+4. What actually moves existing tasks: draining. Flip the strategy toward Green, then drain Blue's instances — same UpdateContainerInstancesState/managed-draining flow as before. Tasks stopped on Blue get rescheduled, and since the strategy now favors Green, that's where they land. Draining is the trigger; the strategy just decides the destination.
+5. Rollback is the mirror image: flip the strategy back to Blue, drain Green.
+6. You're not limited to all-or-nothing, either — weight Blue=3/Green=1 for a 75/25 split, watch it, then push further. That gives you a canary at the capacity layer too, not just an all-at-once swap.
+
+**One naming trap worth flagging now, before it bites you**: "blue/green" is about to mean two different things at once — a task *set* (app layer) and a capacity *pool* (host layer). If both are ever in motion together, "which green" becomes real confusion at 2am. I'd give them visibly different names in runbooks and dashboards — say, `app-blue`/`app-green` for task sets, `fleet-a`/`fleet-b` for capacity — rather than overloading blue/green for both.
+
+**For the steady state**, rather than spinning up a second ASG and tearing it down every week, keep both capacity providers permanent and just alternate which one is "active" each cycle — this cycle's Blue gets the new launch template and becomes next cycle's target. It's the same pattern people use for plain EC2 blue/green with two alternating ASGs, and it's a natural extension of the script you already have rather than new infrastructure every run.
+
+**Where two clusters genuinely would be the right call**: if you specifically want to test a change to *cluster-level* control-plane settings — a new default capacity provider strategy, Container Insights config, some cluster-wide setting — in true isolation before it touches everything. Those settings are cluster-scoped, and a second capacity provider doesn't isolate them. That's not what you've described needing, though — what you've described is host-cohort isolation, and one cluster with two capacity providers gets you that without giving up native blue/green at the deploy layer.
+
+So, plainly: one cluster, two capacity providers, flip the strategy and drain to move tasks over, keep the pair permanent and alternating rather than ephemeral. I'd save the two-cluster idea for the day you're testing cluster-level config changes, not for this.
+
+----
+
+
+ECS doesn't give you that as one call — you have to join two things yourself. But the pieces exist and the join is small.
+
+**The mechanism**
+
+Every container instance carries a `capacityProviderName` field directly in its `DescribeContainerInstances` response, alongside `ec2InstanceId`, `runningTasksCount`, and `pendingTasksCount`. That's the fact that tells you which fleet — Blue or Green — a given host belongs to, and how loaded it currently is:
+
+```
+aws ecs describe-container-instances --cluster <cluster> \
+  --container-instances $(aws ecs list-container-instances --cluster <cluster> \
+    --query 'containerInstanceArns' --output text) \
+  --query 'containerInstances[].{CP:capacityProviderName,Instance:ec2InstanceId,Running:runningTasksCount,Pending:pendingTasksCount}'
+```
+
+Group that output by `CP` and sum `Running` and you have "how many tasks are actually sitting on Blue vs Green" for the whole cluster, right now.
+
+To break it down **per service** (useful once some services are mid-cutover and split across both), it's one more hop: `list-tasks --service-name X` gives you that service's task ARNs, `describe-tasks` gives you each task's `containerInstanceArn`, and you cross-reference that against the container-instance map above. That's a small script rather than a one-liner, but it's the same join, just applied per service instead of cluster-wide.
+
+**Configured intent vs. realized reality — track both, they can disagree**
+
+`describe-services --query 'services[].capacityProviderStrategy'` tells you what a service is *supposed* to do — its weight/base split, whether it's using the cluster default or its own override. That's the target. The join above tells you what's *actually* running where. These drift apart on purpose during a gradual cutover: flipping the strategy to 75/25 only steers where *new* placements go — existing tasks don't move until something drains them. So right after a strategy change, reality still looks like the old ratio, and only converges toward the target as draining (or normal task churn) happens. Worth watching both numbers side by side rather than assuming the strategy change alone tells you where things stand.
+
+**Simpler parallel view: tag the instances**
+
+If you want something you can eyeball in the EC2 console or Cost Explorer without hitting the ECS API, propagate a tag from each ASG down to its instances — `fleet=blue` / `fleet=green` (or `A`/`B`, matching the naming split I flagged last time so it doesn't collide with app-layer blue/green). Set `PropagateAtLaunch: true` on the ASG tag and it's automatic. Gives you filtering in the console and in Cost and Usage Reports for free, as a complement to the ECS-side join, not a replacement for it — it won't tell you task counts, just which fleet a host is in.
+
+**Where this earns its keep**: it's exactly the check that gates a safe decommission. Before you scale a drained capacity provider's ASG to 0, this join is how you confirm every one of its instances shows `Running: 0` — not just "I called drain," but "drain actually finished everywhere."
+
+If you're going to be checking this repeatedly rather than once — which seems likely given you're running an ongoing weekly cadence — it's probably worth turning the join into a small script that publishes a couple of custom CloudWatch metrics (tasks-on-blue, tasks-on-green, per cluster or per service) so the cutover shows up as a graph instead of a CLI query you re-run by hand. Happy to build that out with you if it'd help.
