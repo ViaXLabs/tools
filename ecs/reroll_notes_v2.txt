@@ -1,0 +1,55 @@
+Let's untangle this, because I think the ASG/cluster confusion comes from conflating three different things that all get called "blue/green" but operate at completely different layers:
+
+1. **Deployment blue/green** (service level) — running old and new *task revisions* side by side, verifying, then cutting traffic over. This is what actually gets you zero-downtime deploys.
+2. **Capacity blue/green** (instance level) — what your weekly reroll does: cycling the underlying EC2 hosts. Separate concern.
+3. **Environment blue/green** (cluster/platform level) — two entire parallel stacks, cut over via DNS/routing. This is heavy, and realistically it's closer to what your *ECS→EKS migration itself* might look like, not something you need for routine deploys.
+
+You're asking about #1, but the ASG/cluster questions are #2/#3 thinking bleeding in. You do not need duplicate ASGs or duplicate clusters to get zero-downtime deploys. Here's the deep version.
+
+**Use native ECS blue/green, not CodeDeploy**
+
+As of last July, ECS does blue/green natively — you choose ECS as the deployment controller type and Blue/green as the deployment strategy directly on the service, with no CodeDeploy involved. Since October, it also supports canary and linear traffic-shifting strategies, so it's now at feature parity with what CodeDeploy offered. Given you're on a clock toward EKS, this matters: CodeDeploy blue/green means standing up deployment groups, extra IAM roles, and glue code you'll just have to unwind later. Native blue/green is a handful of fields on the service itself — much less to build and then throw away.
+
+Mechanically: ECS creates a second task set for the new revision behind a second target group on the same ALB, while the first keeps serving traffic. Bake time is the window after traffic shifts to green when instant rollback to blue is still available — it defaults to 15 minutes if you don't set it, though rolling deployments get no default bake time at all, and you're required to set it explicitly when using the BLUE_GREEN strategy. You can also wire in CloudWatch alarms and the deployment circuit breaker for automatic rollback, plus Lambda-based lifecycle hooks that run custom validation at specific points in the rollout (things like confirming a smoke test passed after test traffic hits green, before it's allowed to take production traffic). And there's a "dark canary" pattern — a separate test listener rule that only internal testers can hit, so you can validate the green revision in production without any real user exposure before it ever gets the production traffic switch.
+
+One thing worth connecting back to your ticket from before: **bake time is the native answer to "don't kill the old thing until we're sure the new thing works."** It's just scoped to the service/task-set layer, not the host layer. That may mean less custom Python logic is needed than you'd think — more on this below.
+
+**Your ASG question — no, you don't need two**
+
+Blue/green here is a service-level construct: two task sets sharing whatever compute the cluster already has. Because both revisions run simultaneously during bake time, your cluster just needs enough spare resources to hold both — temporarily — that's it. One capacity provider / one ASG, sized with headroom (or with managed scaling turned on so it grows for the bake window and shrinks back after), covers this fine. You'd only deliberately stand up two separate ASGs if you wanted hard isolation between blue and green capacity for some other reason — different instance types, blast-radius isolation, compliance segregation — and that's an optional, advanced pattern, not a requirement.
+
+Genuinely worth asking, though: for the specific services that must never go down, is EC2 launch type actually buying you anything right now? Fargate sidesteps this entire capacity-headroom conversation — no ASG sizing, no instance warm-up, ECS just provisions the extra task capacity for the bake window and releases it after. Given you're heading to EKS anyway, Fargate-launched ECS tasks are also conceptually closer to what you'll be doing with pods than EC2-backed ECS is. Doesn't have to be all-or-nothing — worth considering for just the "must stay up" tier.
+
+**Your VPC question — here's the actual checklist**
+
+This is the one people get bitten by most often, because it's invisible until deploy day:
+
+- **IP headroom per subnet, per AZ.** If tasks use `awsvpc` networking (required for Fargate, common for EC2), each task gets its own ENI and private IP from the subnet. During bake time you're running roughly double the steady-state task count, so every subnet these services use needs enough free IPs to cover that — not VPC-wide, but per-AZ, since ECS/ALB should be spreading across AZs. A deployment silently stuck in PROVISIONING is very often just a subnet out of addresses. Check it directly:
+  ```
+  aws ec2 describe-subnets --subnet-ids <id> \
+    --query 'Subnets[].{AZ:AvailabilityZone,FreeIPs:AvailableIpAddressCount,CIDR:CidrBlock}'
+  ```
+- **Security groups** on the blue and green target groups need to match (or be intentionally handled) — don't let one drift.
+- **ALB/target group quotas** — target groups per load balancer, targets per target group, listener rules per load balancer. Blue/green needs at least 2 target groups and 2+ listener rules (production, plus a test rule if you use dark canary) per service. If you're doing this across a lot of services in an account, check you're not near the regional quota.
+- **Service Connect, if you use it.** ALB target-group swapping only handles north-south (external) traffic. If these services call each other directly via Service Connect rather than through the ALB, that's a separate mechanism that also needs to be blue/green-aware, or a caller can end up talking to the wrong revision mid-cutover.
+- **ALB vs NLB** — the dark-canary/test-listener-rule mechanics are an ALB (listener rule) feature. If any of these "must stay up" services front an NLB instead, I'd verify current parity for that service specifically before assuming the full feature set applies — I don't have high confidence NLB support is at the same level, so treat that as a per-service check rather than an assumption either way.
+
+**Your clusters question — no, not per service**
+
+Blue/green is per-*service*, inside one cluster. One cluster with headroom capacity can run any number of services, each independently blue/green-deploying on its own schedule. A genuinely separate blue cluster and green cluster is a much heavier pattern — full environment duplication — and I'd reserve that thinking for the actual ECS→EKS cutover, not for routine app deployments.
+
+**The fuller "actually zero downtime" list**
+
+Picking BLUE_GREEN as the strategy isn't sufficient by itself. The full set of things that need to be true together:
+
+- Target group health checks reflect real readiness, not just "the process started" — otherwise bake time is protecting you from nothing.
+- Circuit breaker + CloudWatch alarms are wired to real SLIs (error rate, latency), so a bad green revision actually triggers rollback instead of degrading quietly.
+- Capacity headroom (ASG max size / managed scaling ceiling, or Fargate) can actually absorb the 2x during bake time — test this specifically; a capacity ceiling that's too tight fails as a stuck deployment, not obviously as a capacity problem.
+- For your genuinely highest-risk services, consider CANARY or LINEAR over all-at-once blue/green — smaller blast radius if something's subtly wrong.
+- Multi-AZ spread for task placement and ALB targets — this is a baseline resiliency requirement independent of blue/green, but it's what "always up" actually rests on.
+
+**One thing to explicitly test**: how your weekly host-reroll process interacts with a service that's mid-bake-time in an active blue/green deployment. Ordinary container-instance draining should compose fine with it — draining just relocates tasks according to the service's deployment config — but blue/green task sets are a more rigid construct than a plain rolling deployment, and I wouldn't assume that interaction is clean without watching it happen once in non-prod. That's a five-minute test that saves you a bad surprise later.
+
+**Where I'd actually start**: pick one non-critical prod service, flip it to native ECS blue/green with a short bake time, confirm subnet IP headroom first, and watch a real cutover and a real rollback before touching anything in your "must stay up" tier.
+
+One thing that would sharpen this further — are these services currently behind an ALB, or do any of them sit behind an NLB or rely purely on Service Connect for their traffic? That changes a couple of the specifics above.
