@@ -1,0 +1,20 @@
+Got it — this is a classic "the label lies, the container doesn't" problem. Rather than trust the pipeline matrix value, you want the pipeline to actually open the box and check. Let me build you a script that does that.
+
+Before I hand it over — a few likely reasons Cypress 13 turns into 15 inside the image, in rough order of how often I see them:
+
+1. **ARG scoping bug** — if `ARG CYPRESS_VERSION=13` is declared *before* `FROM` but not re-declared *after* it, the value doesn't carry into the build stage, so the `RUN npm install cypress@$CYPRESS_VERSION` line silently installs with an empty variable → npm grabs latest.
+2. **Docker layer caching** — an old layer built during a "give me latest" experiment gets reused because the `RUN` line that installs Cypress doesn't actually reference the ARG, so Docker doesn't see it as changed and never invalidates the cache.
+3. **Unpinned range in package.json** — something like `"cypress": "^13.0.0"` won't jump to 15, but `"cypress": "*"` or `"latest"` will, especially if `npm ci` isn't used (which needs the lockfile copied in first) and `npm install` re-resolves against the registry instead.
+
+If you want, paste the Dockerfile and I'll point at the exact line. In the meantime, here's the tool that catches this regardless of root cause — a script that shells into the built image, reads what's *actually* installed, and fails the pipeline loudly if it doesn't match what the matrix expected.Good — that reproduces exactly the bug you described (label says 13, image actually has 15) and fails the build with a clear reason. But I spotted a bug in my own script: the OS string still has literal quote characters in it, which breaks the JSON output. Fixing that now.All three cases behave correctly — mismatch caught and fails the build, match passes clean, and report-only mode (no expected version) works too. Let's ship it.How it works, briefly:
+
+- After your image builds, run: `./image-version-audit.sh <image:tag> <expected-cypress> <expected-node>` — e.g. `./image-version-audit.sh myorg/ci-runner:node22-cypress13 13 22`
+- It runs one `docker run` against the built image, reads OS, Node, npm, Python, and both the Cypress *package* and *binary* version (via `cypress version`, which is more reliable than trusting `package.json`).
+- Writes `version-report.json` and `version-report.md` as build artifacts.
+- If the actual version doesn't match what you told it to expect, it exits `1` — so you plug it in as a pipeline step right after the build/push, and it fails the job with a clear message instead of letting a mislabeled image ship. That's the exact "labeled 13, actually 15" case — I tested it against a simulated container reporting Cypress 15 while expecting 13, and it caught it and failed correctly.
+- No `jq` or extra dependencies needed — just `docker`, `sh`, `awk`, `sed`, which every runner already has.
+- Adding another tool to check (Chrome, git, whatever) is a 2-line change: one `echo "===NAME==="; command --version` in `INNER_SCRIPT`, one more line pulling it out further down.
+
+One thing I couldn't test here: your sandbox doesn't have a live Docker daemon, so I validated the parsing/comparison/exit-code logic against a stubbed container response rather than your real image. Worth a real run against your actual Alpine/Cypress image before you wire it into the pipeline for real, just to confirm the `npx cypress version` path resolves correctly given your image's `WORKDIR`.
+
+If you paste your Dockerfile, I can also tell you exactly why it's drifting to 15 instead of just detecting that it did.
