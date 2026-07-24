@@ -1,0 +1,123 @@
+# AWS DMS Monitoring in New Relic (via CloudWatch Metric Streams)
+
+## First: confirm exact field names in your account
+
+New Relic's naming convention for CloudWatch Metric Streams data is `aws.<namespace, lowercased, / → .>` + the original metric name (case preserved). For `AWS/DMS`, that means metrics land as `aws.dms.<MetricName>` — e.g. `aws.dms.CPUUtilization`, `aws.dms.CDCLatencySource`.
+
+Run this first to see exactly what's arrived and what attributes (dimensions) are attached — don't assume the queries below match your data byte-for-byte until you've checked:
+
+```sql
+SELECT uniques(metricName) FROM Metric WHERE metricName LIKE 'aws.dms.%' SINCE 1 day ago
+```
+
+```sql
+SELECT keyset() FROM Metric WHERE metricName = 'aws.dms.CDCLatencyTarget' SINCE 1 hour ago
+```
+
+That second query shows you every attribute attached to that metric — confirm whether it's `ReplicationInstanceIdentifier` / `ReplicationTaskIdentifier` directly, or a `.byReplicationTaskIdentifier`-style suffixed metric name (DMS reports some metrics at both instance-level and task-level, and New Relic sometimes disambiguates multi-dimension metrics with a suffix). Swap the attribute names below for whatever this returns if it differs.
+
+---
+
+## 1. Replication instance health
+
+The resource-level metrics AWS itself recommends watching (per AWS's own DMS troubleshooting guidance):
+
+**CPU / Memory / Swap:**
+
+```sql
+SELECT average(aws.dms.CPUUtilization), average(aws.dms.FreeableMemory), average(aws.dms.SwapUsage)
+FROM Metric
+FACET ReplicationInstanceIdentifier
+SINCE 1 hour ago TIMESERIES
+```
+
+**Storage headroom:**
+
+```sql
+SELECT latest(aws.dms.FreeStorageSpace)
+FROM Metric
+FACET ReplicationInstanceIdentifier
+SINCE 1 hour ago
+```
+
+**I/O:**
+
+```sql
+SELECT average(aws.dms.ReadIOPS), average(aws.dms.WriteIOPS),
+       average(aws.dms.ReadThroughput), average(aws.dms.WriteThroughput)
+FROM Metric
+FACET ReplicationInstanceIdentifier
+SINCE 3 hours ago TIMESERIES
+```
+
+## 2. Replication task health — the "is it keeping up" view
+
+This is probably the section your DMS-focused team will care about most.
+
+**Backlog: incoming vs. applied changes** — if incoming consistently exceeds applied, you're accumulating lag:
+
+```sql
+SELECT sum(aws.dms.CDCIncomingChanges) AS 'Incoming', sum(aws.dms.CDCChanges) AS 'Applied'
+FROM Metric
+FACET ReplicationTaskIdentifier
+SINCE 1 hour ago TIMESERIES
+```
+
+**Source vs. target latency** — AWS's own recommended pair of alarms:
+
+```sql
+SELECT average(aws.dms.CDCLatencySource) AS 'Source lag (s)',
+       average(aws.dms.CDCLatencyTarget) AS 'Target lag (s)'
+FROM Metric
+FACET ReplicationTaskIdentifier
+SINCE 3 hours ago TIMESERIES
+```
+
+**Disk-backlog warning** — climbing values here mean changes are piling up on disk instead of being applied in memory, per AWS's own troubleshooting guide:
+
+```sql
+SELECT average(aws.dms.CDCChangesDiskSource), average(aws.dms.CDCChangesDiskTarget)
+FROM Metric
+FACET ReplicationTaskIdentifier
+SINCE 1 hour ago TIMESERIES
+```
+
+## 3. Full-load progress (initial migration, not ongoing CDC)
+
+```sql
+SELECT sum(aws.dms.FullLoadThroughputRowsSource) AS 'Rows read',
+       sum(aws.dms.FullLoadThroughputRowsTarget) AS 'Rows written'
+FROM Metric
+FACET ReplicationTaskIdentifier
+SINCE 1 hour ago TIMESERIES
+```
+
+## 4. Data validation (if validation is enabled on the task)
+
+```sql
+SELECT sum(aws.dms.ValidationSucceededRecordCount) AS 'Succeeded',
+       sum(aws.dms.ValidationFailedRecordCount) AS 'Failed',
+       sum(aws.dms.ValidationPendingRecordCount) AS 'Pending'
+FROM Metric
+FACET ReplicationTaskIdentifier
+SINCE 1 day ago TIMESERIES
+```
+
+---
+
+## Suggested dashboard layout
+
+1. **Fleet overview** — one row per replication instance: CPU, memory, storage, I/O at a glance (query #1s, faceted).
+2. **Task health** — per-task backlog and latency (query #2s) — this is the page people check when something feels slow.
+3. **Migration progress** — full-load throughput (query #3), useful during active cutover windows, can be archived/hidden once a migration's CDC-only.
+4. **Data integrity** — validation counts (query #4), if you're running validation.
+
+## A few things worth thinking about, beyond the obvious dashboard
+
+- **Alert on the _trend_, not just a threshold.** `CDCLatencyTarget` climbing steadily for 15 minutes is a very different situation from a single noisy spike — a NRQL alert condition using a sustained-duration threshold (e.g., "average > 300s for 10 minutes") catches real degradation without being noisy on transient blips.
+- **Correlate DMS instance metrics with the _target_ database's own metrics.** AWS's own guidance is explicit that target-side bottlenecks (RDS CPU, IOPS, connection exhaustion) are one of the most common causes of climbing `CDCLatencyTarget` — if your target is also in New Relic (RDS integration or APM), a single dashboard with both sides side-by-side turns "DMS is slow" into "is it DMS, or is it what DMS is writing to?"
+- **Facet by task, not just instance, when comparing migrations.** If you're running several tasks off one replication instance, per-task backlog/latency comparisons are what tell you whether one task is starving the others of instance resources — worth a dedicated "how are all my active migrations doing today" view once you're running more than a couple at once.
+- **A rough "time to catch up" estimate** is derivable from `CDCIncomingChanges - CDCChanges` accumulated over a window divided by the current apply rate — not a built-in AWS metric, but a NRQL derived metric worth building if backlog recovery time is something people ask about during incidents.
+- **Watch for the migration finishing its full-load phase** — `FullLoadThroughputRowsSource`/`Target` naturally drop to near-zero once full load completes and the task moves to CDC-only, which is normal, not a problem, but worth annotating on a dashboard so it isn't mistaken for a stall.
+
+Since you're moving off the polling-based DMS reporting, it's worth explicitly turning off any overlapping AWS polling integration configuration for DMS in New Relic's UI (Infrastructure > AWS > Manage services) once you've confirmed the streamed metrics are landing — otherwise you get duplicate data and pay for ingest twice, which New Relic's own migration docs call out directly.
