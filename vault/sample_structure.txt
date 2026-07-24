@@ -1,0 +1,24 @@
+Vault Secret Structure
+======================
+generated: 2026-07-24T18:31:18.565689+00:00
+
+VAULT: prod-eu  (2 mounts, 4 folders, 6 secrets, 11 fields)
+  app-configs/
+    └── shared/
+        └── feature-flags  [keys: new_checkout, dark_mode]
+  secret/
+    ├── app1/
+    │   ├── api-keys/
+    │   │   ├── sendgrid  [keys: api_key]
+    │   │   └── stripe  [keys: publishable_key, secret_key]
+    │   └── database  [keys: username, password, host, port]
+    └── app2/
+        ├── database  [keys: username, password]
+        └── legacy-cert  [read denied: Forbidden]
+
+VAULT: prod-us  (1 mounts, 1 folders, 1 secrets, 1 fields)
+  secret/
+    └── billing/
+        └── stripe-webhook  [keys: signing_secret]
+
+VAULT: staging  [auth_failed]

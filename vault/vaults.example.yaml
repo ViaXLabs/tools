@@ -1,0 +1,40 @@
+# Copy this to vaults.yaml and fill in your real vault addresses.
+# Do NOT put tokens in this file. token_env_var is only the NAME of an
+# environment variable - the actual token value is injected by Harness as a
+# secret at pipeline runtime and never touches this repo.
+
+output:
+  html_path: "vault_structure.html"
+  text_path: "vault_structure.txt"
+  title: "Vault Secret Structure"
+
+defaults:
+  verify_ssl: true       # set false only for internal CA issues you can't fix another way
+  request_timeout: 10
+  max_list_depth: 25      # safety valve against runaway/cyclic recursion
+  max_workers: 4          # vaults scanned in parallel
+
+vaults:
+  - name: "prod-eu"
+    address: "https://vault-prod-eu.example.com:8200"
+    token_env_var: "VAULT_TOKEN_PROD_EU"
+    # namespace: "team-a"     # only needed for Vault Enterprise namespaces
+    mounts: []                # empty/omitted = auto-discover all KV mounts
+
+  - name: "prod-us"
+    address: "https://vault-prod-us.example.com:8200"
+    token_env_var: "VAULT_TOKEN_PROD_US"
+    mounts:
+      - "secret"
+      - "app-configs"
+
+  - name: "staging"
+    address: "https://vault-staging.example.com:8200"
+    token_env_var: "VAULT_TOKEN_STAGING"
+    mounts: []
+
+  # Add the rest of your 8-9 vaults the same way:
+  # - name: "dr-eu"
+  #   address: "https://vault-dr-eu.example.com:8200"
+  #   token_env_var: "VAULT_TOKEN_DR_EU"
+  #   mounts: []
