@@ -18,3 +18,47 @@ If you want, paste the Dockerfile and I'll point at the exact line. In the meant
 One thing I couldn't test here: your sandbox doesn't have a live Docker daemon, so I validated the parsing/comparison/exit-code logic against a stubbed container response rather than your real image. Worth a real run against your actual Alpine/Cypress image before you wire it into the pipeline for real, just to confirm the `npx cypress version` path resolves correctly given your image's `WORKDIR`.
 
 If you paste your Dockerfile, I can also tell you exactly why it's drifting to 15 instead of just detecting that it did.
+
+
+---
+
+Good instinct pulling in SBOM tooling here — hand-rolling grep-based version checks across a whole fleet gets unmaintainable fast, and there are mature free tools built for exactly this. Let me get the current syntax right before I write anything, since flags on these tools shift between versions.Now let me build the two-part pipeline: enumerate everything in Nexus, then run a real SBOM tool against each image and roll the results into one summary. I'll test the parsing logic offline first since I can't hit your actual Nexus instance from here.Now let me write the two real scripts.Now let's test both end-to-end with the stubs, including a deliberate failure case:Good — that flushed out a bug in my test harness (not the real script): my fake curl wasn't exiting cleanly. Real curl won't have this problem, but let me fix the harness to be sure the actual script logic is validated properly.Now the enumeration script works correctly, including pagination across the simulated 2-page catalog. Let's test the SBOM scan + summary step:Both scripts run cleanly end-to-end — including the failure path (one image errors out, gets marked `scan-failed` in the CSV instead of crashing the whole run), and the version extraction pulls exactly the right values into one flat, skimmable table with full SBOMs archived alongside it for anything not in your curated list.Two scripts, meant to run back to back:
+
+**1. `nexus-list-images.sh`** — enumerates every image and tag in Nexus using the standard Docker Registry v2 API (`_catalog` + `tags/list`), not the Nexus-specific REST API. Nexus implements that spec for any docker-format repo, so this works the same way against any registry if you ever move off Nexus. Handles pagination. Output: `nexus-images.txt`, one `repo:tag` per line.
+
+**2. `fleet-sbom-scan.sh`** — reads that list and runs **Syft** (Anchore's open-source SBOM tool, currently v1.42.3) against each image straight from the registry — no `docker pull`, no daemon needed. For each image it:
+- writes a full CycloneDX SBOM to `sboms/` (this is your actual "S-bomb" — a real, standard-format one, not a knockoff)
+- pulls out just the packages you told it to care about (`node npm cypress python python3` by default — edit the `INTERESTED_PACKAGES` line to add more, e.g. `alpine-baselayout git`) into one flat `fleet-versions.csv`
+- if a scan fails on one image, it logs the error and marks that row `scan-failed` rather than killing the whole run — so one bad image in 200 doesn't block the report
+
+**To use them:**
+```bash
+export NEXUS_REGISTRY=nexus.yourcompany.com:8083   # the docker-connector port, not the web UI port
+export NEXUS_USER=your-user
+export NEXUS_PASS=your-token          # set these as CI secrets, never commit them
+
+./nexus-list-images.sh
+./fleet-sbom-scan.sh nexus-images.txt
+```
+You'll need `curl`, `jq`, and `syft` on the runner (install: `curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin`).
+
+I tested the full control flow — pagination, tag enumeration, version extraction, CSV assembly, and the failure path — against stand-ins for `curl`/`docker`/`syft`, since this sandbox has no network or Docker daemon to hit your real Nexus. Worth a live dry run against one known image before pointing it at your whole fleet, just to confirm your Nexus instance's auth and pagination headers behave the way the Docker v2 spec expects.
+
+One nuance worth knowing: if Nexus is a **proxy or group** repository (mirroring Docker Hub, say) rather than purely hosted, the catalog may include upstream images too — you may want to filter `nexus-images.txt` down to just your own namespace prefix before the SBOM step, so you're not scanning the entire internet.
+
+
+---
+
+Fair question, and honestly a good one to ask — let me give you the real answer instead of a defensive one.
+
+I reached for `sh`/bash mainly because these are CI pipeline steps, and the "verbs" involved (`docker login`, `syft scan`, `curl`) are all external CLI tools — shell is the natural glue for chaining subprocess calls with zero setup on any runner. But you're right that it got messy, specifically in the two *aggregation* pieces (talking to the registry API, building the CSV) — that's fundamentally JSON + HTTP + CSV work, and shell is genuinely bad at all three:
+
+- **Pagination** required grep/sed-parsing an HTTP `Link:` header out of raw curl output by hand
+- **CSV building** was manual string concatenation with commas — which silently breaks if any repo or tag ever contains a comma or quote
+- The `jq`/`docker`/`syft`/`curl` toolchain needed 4 separate binaries on the runner, each with its own quoting rules to get right (I hit a couple of exactly these bugs myself while testing it)
+
+Python's stdlib (`json`, `csv`, `urllib`) handles all three of those correctly and readably, no extra binaries beyond Python itself, `docker`, and `syft`. Let me rewrite the two "listing/aggregating" scripts in Python — I'll keep them shelling out to `docker`/`syft` for the actual scan step since those are external tools either way, but everything else gets much cleaner.Now let me test both, mocking the network/subprocess layer the same way I did for the shell versions:Pagination, tag enumeration, and the auth-failure-on-one-repo case all work correctly and the run doesn't crash. Now the SBOM scan script:Both work correctly, including the failure path. Let's also confirm the CSV escaping actually holds up on the exact case that would break the shell version — a repo name containing a comma:That's exactly the difference: the shell version's CSV would have silently corrupted that row (extra commas splitting into the wrong columns); Python's `csv` module quotes and round-trips it correctly with no extra code on my part. Copying the final versions over:Same behavior, same env vars, same output files (`nexus-images.txt`, `fleet-versions.csv`, `sboms/`) — just call `python3 nexus_list_images.py` and `python3 fleet_sbom_scan.py nexus-images.txt` instead of the `.sh` versions. Only external dependencies are still `docker` and `syft` on the runner; everything else is Python standard library, no `pip install` needed.
+
+The one place I kept shelling out either way is `docker login` and `syft scan` themselves — those are external Go binaries, so Python just calls them via `subprocess` the same way bash called them directly. That part was never going to get simpler by switching languages; it's the JSON/HTTP/CSV plumbing around them that actually improved.
+
+I'd leave the single-image `image-version-audit.sh` from earlier as shell, for what it's worth — that one really is just "run one command in a container and grep the output," which is squarely shell's home turf.
