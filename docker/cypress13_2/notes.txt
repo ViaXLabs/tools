@@ -18,3 +18,78 @@ Here's a Dockerfile that pins the version explicitly, wipes out anything a base 
 - **In Harness**, check whether the pipeline variable meant to control the version is actually wired into a `--build-arg` on the docker build step — a disconnected variable would silently build with whatever default the Dockerfile falls back to. Also worth a one-off `--no-cache` build to rule out a stale cached layer from a prior v15/v17 build being reused.
 
 If you paste your current Dockerfile (or the relevant Harness step config), I can diff it against this directly rather than you eyeballing it — that'll probably find the actual bug faster than guessing.
+
+
+---
+
+
+# syntax=docker/dockerfile:1
+#
+# Build:  docker build --build-arg CYPRESS_VERSION=13.21.0 -t alpine_node22_cypress:13 .
+# Verify: docker run --rm alpine_node22_cypress:13 --version
+#
+# NOTE ON ALPINE: Cypress's binary is built against glibc, and Alpine uses
+# musl instead. Cypress officially supports Ubuntu/Debian/Fedora only.
+# This Dockerfile uses gcompat as a best-effort glibc shim so Cypress can
+# run at all on Alpine. If a future Cypress release leans on a glibc
+# feature gcompat doesn't cover, this can break even with the version
+# pinned correctly below -- that's an Alpine limitation, not a typo here.
+# If you hit that wall, the officially supported path is a Debian-based
+# image (cypress/base, cypress/browsers, or the cypress/factory image,
+# which lets you generate a custom Node+Cypress+browser combo without
+# fighting musl at all).
+
+FROM node:22-alpine
+
+# ---- Pin the exact Cypress version here ----
+# A tag like ":13" really means one specific patch in the 13.x line.
+# 13.21.0 is the last 13.x release before Cypress 14 -- swap this for
+# whichever 13.x patch your team has actually standardized on.
+ARG CYPRESS_VERSION=13.21.0
+
+# Packages Cypress needs to actually launch and drive a browser headless,
+# plus gcompat/libc6-compat as the glibc shim mentioned above.
+RUN apk add --no-cache \
+        chromium \
+        nss \
+        freetype \
+        freetype-dev \
+        harfbuzz \
+        ca-certificates \
+        ttf-freefont \
+        udev \
+        xvfb \
+        gcompat \
+        libc6-compat \
+        bash \
+        git \
+        python3 \
+        make \
+        g++
+
+ENV CYPRESS_CACHE_FOLDER=/root/.cache/Cypress
+
+WORKDIR /app
+
+# Wipe any Cypress a parent/base layer might already have installed, so a
+# stale version (e.g. 15.x pulled into an earlier layer of this same base)
+# can't shadow the one we're about to install.
+RUN npm uninstall -g cypress 2>/dev/null || true \
+    && rm -rf /root/.cache/Cypress \
+    && rm -rf /usr/local/lib/node_modules/cypress
+
+# Install the EXACT pinned version. Never a bare `npm install -g cypress`
+# -- that resolves to whatever npm's "latest" dist-tag is at build time
+# (currently 15.x), which is the most likely reason you're not landing on 13.
+RUN npm install -g cypress@${CYPRESS_VERSION}
+
+# Fail the build here -- not three stages downstream in someone else's
+# pipeline -- if the resolved version drifted from what was requested,
+# or if the binary can't actually execute under musl/gcompat.
+RUN installed="$(cypress --version | head -n1)"; \
+    echo "$installed"; \
+    echo "$installed" | grep -q "${CYPRESS_VERSION}" || \
+      (echo "ERROR: expected Cypress ${CYPRESS_VERSION}, got: $installed" && exit 1)
+RUN cypress verify
+
+ENTRYPOINT ["cypress"]
