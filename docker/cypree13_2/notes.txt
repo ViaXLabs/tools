@@ -1,0 +1,20 @@
+Quick gut check before the file: this exact symptom — "should be 13, keeps coming out as something else" — usually traces to one of two things, and I want to flag them since they'll matter more than the Dockerfile itself.
+
+**1. Alpine + Cypress don't officially get along.** Cypress's own docs are explicit that Cypress on Linux requires a minimum glibc version of 2.17, and since glibc ships with the OS, that can't be changed — and Alpine doesn't ship glibc at all, it uses musl. Cypress's supported Linux list is Ubuntu/Fedora/Debian, never Alpine. It can be coaxed to run on Alpine with a compat shim (`gcompat`), but that's a workaround, not something Cypress guarantees will keep working release over release. If your `alpine_node22_cypress` family already works for v15 and v17, you're probably already relying on that shim and it's fine — just know it's the reason things get flaky sometimes.
+
+**2. This is very likely why you're getting the wrong version.** I checked npm just now — the latest published Cypress version is 15.19.0. If anywhere in the Dockerfile or a Harness build-arg the version isn't explicitly pinned (e.g. a bare `npm install -g cypress` instead of `cypress@13.x.x`), npm silently grabs whatever `latest` is — right now that's 15.x. That would explain "I ask for 13, I get 15" perfectly, with zero need for anything exotic. Also worth checking: does your Harness step actually pass `--build-arg CYPRESS_VERSION=...`, or is there a hardcoded default in the Dockerfile it's falling back to? And is Harness doing Docker layer caching that might be replaying an old `RUN npm install -g cypress` layer from a previous v15 build?
+
+Here's a Dockerfile that pins the version explicitly, wipes out anything a base layer might have baked in, and — critically — fails the build loudly if the installed version doesn't match what you asked for, instead of silently shipping the wrong one.A few things to actually check once you've transferred this over:
+
+- **Build and tag it to match your convention:**
+  ```
+  docker build --build-arg CYPRESS_VERSION=13.21.0 -t alpine_node22_cypress:13 .
+  docker run --rm alpine_node22_cypress:13 --version
+  ```
+  Confirm the printed version matches before pushing anywhere.
+
+- **Compare against your existing Dockerfile specifically for:** whether `cypress` is installed with `@<version>` at all, or just bare `npm install cypress`/`-g cypress`. That's the #1 suspect for "asked for 13, got something else."
+
+- **In Harness**, check whether the pipeline variable meant to control the version is actually wired into a `--build-arg` on the docker build step — a disconnected variable would silently build with whatever default the Dockerfile falls back to. Also worth a one-off `--no-cache` build to rule out a stale cached layer from a prior v15/v17 build being reused.
+
+If you paste your current Dockerfile (or the relevant Harness step config), I can diff it against this directly rather than you eyeballing it — that'll probably find the actual bug faster than guessing.
