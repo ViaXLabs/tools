@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docker Image EOL Report — 2026-08-05 00:08</title>
+<style>
+  :root {
+    --bg: #F6F5F2;
+    --panel: #FFFFFF;
+    --ink: #1B1E23;
+    --ink-soft: #5B6270;
+    --line: #E4E2DC;
+    --eol: #B23A32;
+    --eol-bg: #FBEAE8;
+    --soon: #C07E11;
+    --soon-bg: #FBF1DD;
+    --ok: #2E6B4F;
+    --ok-bg: #E8F2EC;
+    --review: #5B6270;
+    --review-bg: #ECEBE7;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Roboto Mono", monospace;
+    --sans: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--ui); font-size: 14px; line-height: 1.45;
+  }
+  header {
+    background: var(--ink); color: #F6F5F2; padding: 32px 40px 28px;
+  }
+  header h1 {
+    font-family: var(--sans); font-weight: 600; font-size: 26px; margin: 0 0 4px;
+    letter-spacing: 0.2px;
+  }
+  header .sub { color: #B9BDC6; font-size: 13px; }
+  header .sub .mono { color: #E4E2DC; }
+  .stats {
+    display: flex; gap: 14px; padding: 22px 40px 0; flex-wrap: wrap;
+  }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 20px; min-width: 150px;
+  }
+  .stat .num { font-family: var(--mono); font-size: 26px; font-weight: 600; }
+  .stat .lbl { font-size: 12px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+  .stat.eol .num { color: var(--eol); }
+  .stat.soon .num { color: var(--soon); }
+  .stat.ok .num { color: var(--ok); }
+  .stat.review .num { color: var(--review); }
+
+  main { padding: 8px 40px 60px; max-width: 1180px; margin: 0 auto; }
+  section.status-section { margin-top: 34px; }
+  section h2 {
+    font-family: var(--sans); font-size: 17px; font-weight: 600; margin: 0 0 10px;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  section h2 .count {
+    font-family: var(--mono); font-size: 13px; color: var(--ink-soft); font-weight: 400;
+  }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-soft); font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .img-name { font-weight: 600; }
+  .img-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11.5px;
+    font-weight: 600; letter-spacing: 0.02em; white-space: nowrap;
+  }
+  .badge-eol { background: var(--eol-bg); color: var(--eol); }
+  .badge-eol-soon { background: var(--soon-bg); color: var(--soon); }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-needs-review { background: var(--review-bg); color: var(--review); }
+  .note { font-size: 12px; color: var(--ink-soft); margin-top: 6px; max-width: 260px; }
+  .note.stale { color: var(--soon); }
+  a { color: inherit; }
+  .lifebar {
+    position: relative; width: 90px; height: 6px; background: var(--line);
+    border-radius: 999px; margin-top: 4px;
+  }
+  .lifebar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--line); border-radius: 999px; }
+  .lifebar-marker {
+    position: absolute; top: -3px; width: 2px; height: 12px; background: var(--ink);
+    transform: translateX(-1px);
+  }
+  footer { padding: 20px 40px 40px; color: var(--ink-soft); font-size: 12px; max-width: 1180px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Docker Image End-of-Life Report</h1>
+  <div class="sub">Generated <span class="mono">2026-08-05 00:08</span> · warning window <span class="mono">180 days</span></div>
+</header>
+<div class="stats">
+  <div class="stat eol"><div class="num">5</div><div class="lbl">Out of service</div></div>
+  <div class="stat soon"><div class="num">4</div><div class="lbl">Approaching EOL</div></div>
+  <div class="stat ok"><div class="num">6</div><div class="lbl">Supported</div></div>
+  <div class="stat review"><div class="num">0</div><div class="lbl">Needs review</div></div>
+</div>
+<main>
+  
+        <section class="status-section status-eol">
+          <h2>Out of service <span class="count">5</span></h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Image</th><th>Current</th><th>Latest</th><th>EOL date</th>
+                <th>Time left</th><th>Lifecycle</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/cypress-e2e</div>
+            <div class="img-sub">cypress · ubuntu</div>
+          </td>
+          <td class="mono">13.6.1</td>
+          <td class="mono">15.2.0</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td></td>
+          <td><span class="badge badge-eol">Out of service</span><div class="note">2 major versions behind latest (15.2.0). Outside this project's typical rolling support window — treat as unsupported.</div></td>
+          <td><a href="https://github.com/cypress-io/cypress/releases" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/golang-builder</div>
+            <div class="img-sub">go · alpine</div>
+          </td>
+          <td class="mono">1.22.5</td>
+          <td class="mono">1.22.5</td>
+          <td class="mono">2025-02-11</td>
+          <td class="mono">540d overdue</td>
+          <td><div class="lifebar" title="Released 2024-02-06 · EOL 2025-02-11">
+        <div class="lifebar-fill" style="width:100%"></div>
+        <div class="lifebar-marker" style="left:100%"></div>
+    </div></td>
+          <td><span class="badge badge-eol">Out of service</span></td>
+          <td><a href="https://endoflife.date/go" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/nginx-proxy</div>
+            <div class="img-sub">nginx · alpine</div>
+          </td>
+          <td class="mono">1.26.2</td>
+          <td class="mono">1.26.2</td>
+          <td class="mono">2026-05-28</td>
+          <td class="mono">69d overdue</td>
+          <td><div class="lifebar" title="Released 2024-05-28 · EOL 2026-05-28">
+        <div class="lifebar-fill" style="width:100%"></div>
+        <div class="lifebar-marker" style="left:100%"></div>
+    </div></td>
+          <td><span class="badge badge-eol">Out of service</span></td>
+          <td><a href="https://endoflife.date/nginx" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/node-service</div>
+            <div class="img-sub">nodejs · ubuntu</div>
+          </td>
+          <td class="mono">18.20.4</td>
+          <td class="mono">18.20.4</td>
+          <td class="mono">2025-04-30</td>
+          <td class="mono">462d overdue</td>
+          <td><div class="lifebar" title="Released 2022-04-19 · EOL 2025-04-30">
+        <div class="lifebar-fill" style="width:100%"></div>
+        <div class="lifebar-marker" style="left:100%"></div>
+    </div></td>
+          <td><span class="badge badge-eol">Out of service</span></td>
+          <td><a href="https://endoflife.date/nodejs" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/terraform-runner</div>
+            <div class="img-sub">terraform · alpine</div>
+          </td>
+          <td class="mono">1.6.6</td>
+          <td class="mono">1.6.6</td>
+          <td class="mono">2025-10-04</td>
+          <td class="mono">305d overdue</td>
+          <td><div class="lifebar" title="Released 2023-10-04 · EOL 2025-10-04">
+        <div class="lifebar-fill" style="width:100%"></div>
+        <div class="lifebar-marker" style="left:100%"></div>
+    </div></td>
+          <td><span class="badge badge-eol">Out of service</span></td>
+          <td><a href="https://endoflife.date/terraform" target="_blank" rel="noopener">source</a></td>
+        </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="status-section status-eol_soon">
+          <h2>Approaching EOL <span class="count">4</span></h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Image</th><th>Current</th><th>Latest</th><th>EOL date</th>
+                <th>Time left</th><th>Lifecycle</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/alpine-base</div>
+            <div class="img-sub">alpine-linux · alpine</div>
+          </td>
+          <td class="mono">3.19.1</td>
+          <td class="mono">3.19.1</td>
+          <td class="mono">2026-11-01</td>
+          <td class="mono">88d left</td>
+          <td><div class="lifebar" title="Released 2023-12-07 · EOL 2026-11-01">
+        <div class="lifebar-fill" style="width:92%"></div>
+        <div class="lifebar-marker" style="left:92%"></div>
+    </div></td>
+          <td><span class="badge badge-eol-soon">Approaching EOL</span></td>
+          <td><a href="https://endoflife.date/alpine-linux" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/ruby-service</div>
+            <div class="img-sub">ruby · ubuntu</div>
+          </td>
+          <td class="mono">3.1.6</td>
+          <td class="mono">3.1.6</td>
+          <td class="mono">2026-11-01</td>
+          <td class="mono">88d left</td>
+          <td><div class="lifebar" title="Released 2021-12-25 · EOL 2026-11-01">
+        <div class="lifebar-fill" style="width:95%"></div>
+        <div class="lifebar-marker" style="left:95%"></div>
+    </div></td>
+          <td><span class="badge badge-eol-soon">Approaching EOL</span></td>
+          <td><a href="https://endoflife.date/ruby" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/sonarqube-server</div>
+            <div class="img-sub">sonarqube-server · ubuntu</div>
+          </td>
+          <td class="mono">2025.1.2</td>
+          <td class="mono">2025.1.2</td>
+          <td class="mono">2026-10-01</td>
+          <td class="mono">57d left</td>
+          <td><div class="lifebar" title="Released 2025-01-15 · EOL 2026-10-01">
+        <div class="lifebar-fill" style="width:91%"></div>
+        <div class="lifebar-marker" style="left:91%"></div>
+    </div></td>
+          <td><span class="badge badge-eol-soon">Approaching EOL</span></td>
+          <td><a href="https://endoflife.date/sonarqube-server" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/tomcat-app</div>
+            <div class="img-sub">tomcat · ubuntu</div>
+          </td>
+          <td class="mono">9.0.91</td>
+          <td class="mono">9.0.91</td>
+          <td class="mono">2026-12-31</td>
+          <td class="mono">148d left</td>
+          <td><div class="lifebar" title="Released 2017-01-31 · EOL 2026-12-31">
+        <div class="lifebar-fill" style="width:96%"></div>
+        <div class="lifebar-marker" style="left:96%"></div>
+    </div></td>
+          <td><span class="badge badge-eol-soon">Approaching EOL</span></td>
+          <td><a href="https://endoflife.date/tomcat" target="_blank" rel="noopener">source</a></td>
+        </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="status-section status-ok">
+          <h2>Supported <span class="count">6</span></h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Image</th><th>Current</th><th>Latest</th><th>EOL date</th>
+                <th>Time left</th><th>Lifecycle</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/harness-delegate</div>
+            <div class="img-sub">harness · ubuntu</div>
+          </td>
+          <td class="mono">24.09.83428</td>
+          <td class="mono">24.09.83428</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td></td>
+          <td><span class="badge badge-ok">Supported</span></td>
+          <td><a href="https://developer.harness.io/release-notes/delegate" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/jetty-app</div>
+            <div class="img-sub">eclipse-jetty · ubuntu</div>
+          </td>
+          <td class="mono">11.0.22</td>
+          <td class="mono">11.0.22</td>
+          <td class="mono">2028-01-01</td>
+          <td class="mono">514d left</td>
+          <td><div class="lifebar" title="Released 2021-09-01 · EOL 2028-01-01">
+        <div class="lifebar-fill" style="width:78%"></div>
+        <div class="lifebar-marker" style="left:78%"></div>
+    </div></td>
+          <td><span class="badge badge-ok">Supported</span></td>
+          <td><a href="https://endoflife.date/eclipse-jetty" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/jmeter-perf</div>
+            <div class="img-sub">jmeter · ubuntu</div>
+          </td>
+          <td class="mono">5.6.2</td>
+          <td class="mono">5.6.3</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td></td>
+          <td><span class="badge badge-ok">Supported</span><div class="note">On the latest major version.</div></td>
+          <td><a href="https://github.com/apache/jmeter/releases" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/jvm-base</div>
+            <div class="img-sub">eclipse-temurin · ubuntu</div>
+          </td>
+          <td class="mono">17.0.12</td>
+          <td class="mono">17.0.12</td>
+          <td class="mono">2029-10-01</td>
+          <td class="mono">1153d left</td>
+          <td><div class="lifebar" title="Released 2021-09-14 · EOL 2029-10-01">
+        <div class="lifebar-fill" style="width:61%"></div>
+        <div class="lifebar-marker" style="left:61%"></div>
+    </div></td>
+          <td><span class="badge badge-ok">Supported</span></td>
+          <td><a href="https://endoflife.date/eclipse-temurin" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/node-service-alpine</div>
+            <div class="img-sub">nodejs · alpine</div>
+          </td>
+          <td class="mono">22.9.0</td>
+          <td class="mono">22.9.0</td>
+          <td class="mono">2027-04-30</td>
+          <td class="mono">268d left</td>
+          <td><div class="lifebar" title="Released 2024-04-24 · EOL 2027-04-30">
+        <div class="lifebar-fill" style="width:76%"></div>
+        <div class="lifebar-marker" style="left:76%"></div>
+    </div></td>
+          <td><span class="badge badge-ok">Supported</span></td>
+          <td><a href="https://endoflife.date/nodejs" target="_blank" rel="noopener">source</a></td>
+        </tr>
+        <tr>
+          <td class="col-name">
+            <div class="img-name">my-team/ubuntu-base</div>
+            <div class="img-sub">ubuntu · ubuntu</div>
+          </td>
+          <td class="mono">22.04</td>
+          <td class="mono">22.04.4</td>
+          <td class="mono">2027-06-01</td>
+          <td class="mono">300d left</td>
+          <td><div class="lifebar" title="Released 2022-04-21 · EOL 2027-06-01">
+        <div class="lifebar-fill" style="width:84%"></div>
+        <div class="lifebar-marker" style="left:84%"></div>
+    </div></td>
+          <td><span class="badge badge-ok">Supported</span></td>
+          <td><a href="https://endoflife.date/ubuntu" target="_blank" rel="noopener">source</a></td>
+        </tr>
+            </tbody>
+          </table>
+        </section>
+</main>
+<footer>
+  Sources: endoflife.date (community-maintained), vendor GitHub releases, and manually-verified entries in
+  <span class="mono">manual_sources.yaml</span>. This report is a decision aid — always confirm anything in the
+  "Needs review" group before treating it as fine.
+</footer>
+</body>
+</html>

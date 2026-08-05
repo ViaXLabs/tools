@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image Verification Report — 2026-08-05 00:07</title>
+<style>
+  :root {
+    --bg:#F6F5F2; --panel:#FFFFFF; --ink:#1B1E23; --ink-soft:#5B6270; --line:#E4E2DC;
+    --bad:#B23A32; --bad-bg:#FBEAE8; --warn:#C07E11; --warn-bg:#FBF1DD;
+    --good:#2E6B4F; --good-bg:#E8F2EC;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+    --sans: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--ui); font-size:14px; }
+  header { background:var(--ink); color:#F6F5F2; padding:28px 40px; }
+  header h1 { font-family:var(--sans); font-size:24px; margin:0 0 4px; }
+  header .sub { color:#B9BDC6; font-size:13px; }
+  main { padding:8px 40px 60px; max-width:1100px; margin:0 auto; }
+  section { margin-top:30px; }
+  section h2 { font-family:var(--sans); font-size:16px; margin:0 0 10px; }
+  section h2 .count { font-family:var(--mono); font-size:13px; color:var(--ink-soft); font-weight:400; }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+  thead th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); padding:10px 14px; border-bottom:1px solid var(--line); }
+  tbody td { padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tbody tr:last-child td { border-bottom:none; }
+  .mono { font-family:var(--mono); font-size:12.5px; }
+  .img-name { font-weight:600; }
+  .img-sub { font-size:12px; color:var(--ink-soft); }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:600; white-space:nowrap; }
+  .badge-mismatch { background:var(--bad-bg); color:var(--bad); }
+  .badge-unverifiable { background:var(--warn-bg); color:var(--warn); }
+  .badge-match { background:var(--good-bg); color:var(--good); }
+  .note { font-size:12px; color:var(--ink-soft); margin-top:6px; max-width:420px; }
+</style></head>
+<body>
+<header><h1>Image Verification Report</h1>
+<div class="sub">Generated 2026-08-05 00:07 · checks what's actually inside each image, not just its registry tag</div></header>
+<main>
+        <section>
+          <h2>Tag mismatch <span class="count">2</span></h2>
+          <table>
+            <thead><tr><th>Image</th><th>Tag claims</th><th>Image actually reports</th>
+            <th>Verified via</th><th>Status</th></tr></thead>
+            <tbody>
+        <tr>
+          <td><div class="img-name">my-team/golang-builder</div><div class="img-sub">go</div></td>
+          <td class="mono">1.21</td>
+          <td class="mono">1.22.5</td>
+          <td class="mono">env:GOLANG_VERSION</td>
+          <td><span class="badge badge-mismatch">Tag mismatch</span>
+              <div class="note">Registry tag implies 1.21, but env:GOLANG_VERSION inside the image itself reports 1.22.5. Treating the tag as authoritative here would be WRONG — investigate this image.</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/node-service</div><div class="img-sub">nodejs</div></td>
+          <td class="mono">20</td>
+          <td class="mono">18.20.4</td>
+          <td class="mono">env:NODE_VERSION</td>
+          <td><span class="badge badge-mismatch">Tag mismatch</span>
+              <div class="note">Registry tag implies 20, but env:NODE_VERSION inside the image itself reports 18.20.4. Treating the tag as authoritative here would be WRONG — investigate this image.</div></td>
+        </tr></tbody>
+          </table>
+        </section>
+        <section>
+          <h2>Unverifiable <span class="count">1</span></h2>
+          <table>
+            <thead><tr><th>Image</th><th>Tag claims</th><th>Image actually reports</th>
+            <th>Verified via</th><th>Status</th></tr></thead>
+            <tbody>
+        <tr>
+          <td><div class="img-name">my-team/harness-delegate</div><div class="img-sub">harness</div></td>
+          <td class="mono">24.09.83428</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td><span class="badge badge-unverifiable">Unverifiable</span>
+              <div class="note">No matching env var or label found in the image config. Consider adding `LABEL org.opencontainers.image.version="..."` at build time.</div></td>
+        </tr></tbody>
+          </table>
+        </section>
+        <section>
+          <h2>Confirmed <span class="count">12</span></h2>
+          <table>
+            <thead><tr><th>Image</th><th>Tag claims</th><th>Image actually reports</th>
+            <th>Verified via</th><th>Status</th></tr></thead>
+            <tbody>
+        <tr>
+          <td><div class="img-name">my-team/alpine-base</div><div class="img-sub">alpine-linux</div></td>
+          <td class="mono">3.19</td>
+          <td class="mono">3.19.1</td>
+          <td class="mono">etc/os-release</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via etc/os-release: 3.19.1</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/cypress-e2e</div><div class="img-sub">cypress</div></td>
+          <td class="mono">13.6.1</td>
+          <td class="mono">13.6.1</td>
+          <td class="mono">env:CYPRESS_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:CYPRESS_VERSION: 13.6.1</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/jetty-app</div><div class="img-sub">eclipse-jetty</div></td>
+          <td class="mono">11</td>
+          <td class="mono">11.0.22</td>
+          <td class="mono">env:JETTY_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:JETTY_VERSION: 11.0.22</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/jmeter-perf</div><div class="img-sub">jmeter</div></td>
+          <td class="mono">5.6.2</td>
+          <td class="mono">5.6.2</td>
+          <td class="mono">env:JMETER_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:JMETER_VERSION: 5.6.2</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/jvm-base</div><div class="img-sub">eclipse-temurin</div></td>
+          <td class="mono">17</td>
+          <td class="mono">17.0.12</td>
+          <td class="mono">label:org.opencontainers.image.version</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via label:org.opencontainers.image.version: 17.0.12</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/nginx-proxy</div><div class="img-sub">nginx</div></td>
+          <td class="mono">1.26</td>
+          <td class="mono">1.26.2</td>
+          <td class="mono">env:NGINX_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:NGINX_VERSION: 1.26.2</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/node-service-alpine</div><div class="img-sub">nodejs</div></td>
+          <td class="mono">22</td>
+          <td class="mono">22.9.0</td>
+          <td class="mono">env:NODE_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:NODE_VERSION: 22.9.0</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/ruby-service</div><div class="img-sub">ruby</div></td>
+          <td class="mono">3.1</td>
+          <td class="mono">3.1.6</td>
+          <td class="mono">env:RUBY_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:RUBY_VERSION: 3.1.6</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/sonarqube-server</div><div class="img-sub">sonarqube-server</div></td>
+          <td class="mono">2025.1</td>
+          <td class="mono">2025.1.2</td>
+          <td class="mono">label:org.opencontainers.image.version</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via label:org.opencontainers.image.version: 2025.1.2</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/terraform-runner</div><div class="img-sub">terraform</div></td>
+          <td class="mono">1.6</td>
+          <td class="mono">1.6.6</td>
+          <td class="mono">env:TERRAFORM_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:TERRAFORM_VERSION: 1.6.6</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/tomcat-app</div><div class="img-sub">tomcat</div></td>
+          <td class="mono">9</td>
+          <td class="mono">9.0.91</td>
+          <td class="mono">env:TOMCAT_VERSION</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via env:TOMCAT_VERSION: 9.0.91</div></td>
+        </tr>
+        <tr>
+          <td><div class="img-name">my-team/ubuntu-base</div><div class="img-sub">ubuntu</div></td>
+          <td class="mono">22.04</td>
+          <td class="mono">22.04</td>
+          <td class="mono">etc/os-release</td>
+          <td><span class="badge badge-match">Confirmed</span>
+              <div class="note">Confirmed via etc/os-release: 22.04</div></td>
+        </tr></tbody>
+          </table>
+        </section></main>
+</body></html>

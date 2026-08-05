@@ -1,0 +1,66 @@
+# ============================================================================
+# Where to find each product's REAL version inside the image itself, as
+# opposed to trusting the registry tag string.
+#
+# Most official upstream base images bake their version into an ENV var
+# (e.g. the official Node image sets NODE_VERSION, Tomcat sets
+# TOMCAT_VERSION). If your Dockerfiles build FROM those images without
+# stripping ENV, that value survives into your final image and is a much
+# stronger source of truth than the tag someone chose when pushing to Nexus.
+#
+# `env_vars`     candidate ENV var names to check, in priority order
+# `labels`       candidate OCI/custom label keys to check, in priority order
+#                (checked if no env var found)
+# `os_release`   true = this product's real version realistically can only
+#                be confirmed by reading /etc/os-release from the image's
+#                filesystem layers (no ENV var convention exists for it).
+#                Only used if --scan-os-release is passed; otherwise these
+#                are reported as "unverifiable — add a version label at
+#                build time, or re-run with --scan-os-release".
+# ============================================================================
+
+rules:
+  ubuntu:
+    env_vars: []
+    labels: ["org.opencontainers.image.version"]
+    os_release: true
+  alpine-linux:
+    env_vars: []
+    labels: ["org.opencontainers.image.version"]
+    os_release: true
+  nodejs:
+    env_vars: ["NODE_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  ruby:
+    env_vars: ["RUBY_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  go:
+    env_vars: ["GOLANG_VERSION", "GO_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  eclipse-temurin:
+    env_vars: ["JAVA_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  terraform:
+    env_vars: ["TERRAFORM_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  nginx:
+    env_vars: ["NGINX_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  tomcat:
+    env_vars: ["TOMCAT_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  eclipse-jetty:
+    env_vars: ["JETTY_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  sonarqube-server:
+    env_vars: ["SONAR_VERSION", "SONARQUBE_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  cypress:
+    env_vars: ["CYPRESS_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  jmeter:
+    env_vars: ["JMETER_VERSION"]
+    labels: ["org.opencontainers.image.version"]
+  harness:
+    env_vars: []
+    labels: ["org.opencontainers.image.version"]

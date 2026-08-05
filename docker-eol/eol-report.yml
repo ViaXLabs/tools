@@ -1,0 +1,85 @@
+name: Docker Image EOL Report
+
+on:
+  schedule:
+    # 8am UTC on the 1st of every month
+    - cron: "0 8 1 * *"
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab too
+
+jobs:
+  eol-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pull current inventory from Nexus
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          python nexus_inventory.py \
+            --nexus-url "${{ vars.NEXUS_URL }}" \
+            --repository docker-hosted \
+            --out config/images.raw.yaml
+        # ^ Set NEXUS_URL as a repo/org Variable, and NEXUS_USERNAME /
+        # NEXUS_PASSWORD (or NEXUS_TOKEN) as repo/org Secrets under
+        # Settings -> Secrets and variables -> Actions. If you'd rather
+        # hand-maintain config/images.yaml instead of pulling from Nexus,
+        # delete this step and point the next one at config/images.yaml.
+
+      - name: Verify tags against real image content
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          python image_introspect.py \
+            --in config/images.raw.yaml \
+            --registry-url "${{ vars.REGISTRY_URL }}" \
+            --scan-os-release \
+            --out config/images.verified.yaml \
+            --report verification_report.html
+        # ^ REGISTRY_URL is often the same host as NEXUS_URL but check your
+        # setup — some Nexus instances expose Docker repos on a separate
+        # port/hostname. --scan-os-release costs extra bandwidth (it
+        # downloads base-image layers to read /etc/os-release) but is what
+        # actually confirms Ubuntu/Alpine versions rather than trusting the
+        # tag. Drop it if that cost isn't worth it for your monthly job.
+
+      - name: Generate report
+        run: python eol_report.py --config config/images.verified.yaml --out report.html --json-out results.json
+        # Note: this step's exit code is 2 if anything is out of service,
+        # 1 if something is approaching EOL. Remove `continue-on-error` below
+        # if you want the workflow to go red as a visible signal.
+        continue-on-error: true
+
+      - name: Upload report as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-eol-report
+          path: |
+            report.html
+            results.json
+            verification_report.html
+          retention-days: 90
+
+      # Optional: post a summary straight into the Actions run page
+      - name: Add summary
+        run: |
+          echo "### Docker Image EOL Report" >> $GITHUB_STEP_SUMMARY
+          echo "See the uploaded artifact for the full HTML report." >> $GITHUB_STEP_SUMMARY
+
+      # Optional: notify Slack instead of / in addition to the artifact.
+      # Uncomment and set SLACK_WEBHOOK_URL as a repo secret.
+      # - name: Notify Slack
+      #   if: always()
+      #   run: |
+      #     curl -X POST -H 'Content-type: application/json' \
+      #       --data '{"text":"Monthly Docker image EOL report is ready: see the Actions run artifacts."}' \
+      #       "${{ secrets.SLACK_WEBHOOK_URL }}"
