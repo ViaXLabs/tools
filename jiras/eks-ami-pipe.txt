@@ -1,0 +1,53 @@
+Good context — this is a pretty well-trodden pattern (EC2 Image Builder is almost certainly what your ECS golden AMI pipeline uses), so mapping it to EKS is mostly about substituting the node-type-specific pieces. Here's how I'd think about it:
+
+**Core pipeline shape (should mirror ECS almost exactly)**
+
+1. **Source stage** — pull the admin team's base image (probably an EC2 Image Builder "parent image" reference, or an AMI ID/SSM parameter they publish).
+2. **OS patching stage** — same components you're already using for ECS: OS updates, CIS/STIG hardening, agent installs (SSM agent, monitoring, etc.).
+3. **Program-specific stage** — your org's packages, security tooling, config files, users/groups, whatever makes it "yours."
+4. **EKS-specific stage** (this is the part that's new relative to ECS) — this is where the real design work is:
+   - Install/validate `kubelet`, `containerd` (or Docker if you're on an older AMI family), `kube-proxy`
+   - Bake in the correct CNI plugin binaries if you're not relying on a DaemonSet-only install
+   - Bootstrap script — if you're building off AL2/AL2023 EKS-optimized base, decide whether you use the legacy `bootstrap.sh` or the newer `nodeadm` (AL2023) config approach
+   - Pin/validate the kubelet version against the EKS cluster version(s) you support — this is the most common source of node-join failures, so version compatibility checks belong in validation, not just documentation
+5. **Validation stage** — for ECS this probably just checks agent registration/health. For EKS you'll want more:
+   - Boot the built AMI, confirm kubelet/containerd start cleanly
+   - Ideally join a test/ephemeral node group in a scratch cluster and confirm it reaches `Ready` state
+   - Run a basic pod scheduling smoke test if you want higher confidence
+   - Security scan (Inspector/Trivy/whatever you already run for ECS)
+6. **Output/distribution stage** — same as ECS: tag with version + patch date + source EKS version, publish AMI ID to SSM Parameter Store (this is the standard way EKS node groups/Karpenter reference "latest golden AMI"), replicate to whatever regions/accounts need it.
+
+**Where EKS actually diverges from ECS, worth calling out explicitly in the ticket:**
+- Version coupling: ECS agent version drift is low-stakes; EKS node kubelet version vs control plane version has real compatibility constraints (skew policy), so your pipeline probably needs a way to build/tag per supported k8s minor version, not just one universal AMI.
+- Bootstrap complexity: ECS node registration is simpler than kubelet joining a cluster — expect more moving parts in the validation stage.
+- If you're supporting Bottlerocket as an option instead of AL2023, that's a genuinely different pipeline (image-based config, not a mutable OS), worth deciding early since it changes the whole "patch and layer" model.
+
+**Practical next step for the ticket:** since you said this is a foundation for incremental enhancement, I'd scope v1 as "parity with ECS pattern + minimum viable EKS validation (boot + kubelet healthy)" and explicitly punt full cluster-join testing and multi-k8s-version support to a fast-follow, rather than trying to solve version matrix support in the first pass.
+
+Want me to sketch this out as an actual Image Builder recipe/component structure (yaml-ish) once you're back on the other machine, or is this level of framing enough for the ticket for now?
+
+---
+
+
+Got it — so this is really a "clone and adapt" job rather than a build-from-scratch. Here's the practical checklist I'd bring to that, regardless of what the harness/pipeline tool actually is under the hood:
+
+**Before you copy anything**
+- Find every place the ECS pipeline hardcodes "ECS" — job names, artifact tags, IAM role names, SSM parameter paths, S3 bucket prefixes, notification channels/topics. These are easy to miss individually but painful to find later when two pipelines are silently writing to the same path.
+- Identify which parts are truly generic (OS patch stage, org security hardening stage, artifact publishing/tagging mechanics) vs which parts are ECS-specific (agent install, ECS-specific validation checks) — you're keeping the former as-is and swapping the latter.
+
+**Stage-by-stage swap list**
+- **Source/base image reference** — confirm the admin team publishes a separate base image (or SSM parameter) for EKS-optimized AMIs vs whatever ECS uses. Don't assume it's the same parent image family.
+- **Software install stage** — swap ECS agent/Docker install steps for kubelet/containerd/kube-proxy/CNI install steps.
+- **Bootstrap/config stage** — ECS probably has a simple agent config file; EKS needs cluster bootstrap logic (`bootstrap.sh` or `nodeadm` config) — this is usually the biggest real content difference, not just a find-replace.
+- **Validation/test stage** — this is where copy-paste breaks down most. ECS validation checks (agent registration, ECS API health) don't map 1:1. You need EKS-appropriate checks (kubelet health, node-join test) even in v1, or your pipeline will report green on a broken AMI.
+- **Output/publish stage** — usually copies cleanly: same tagging convention, same SSM parameter pattern, same replication logic — just new parameter names/paths.
+
+**Things that bite people specifically on this kind of clone**
+- Permissions/IAM roles scoped narrowly to ECS resources — the copied pipeline will fail silently or with confusing access-denied errors if you don't audit and re-scope these.
+- Shared naming conventions colliding (e.g., a `golden-ami-latest` tag or parameter that isn't namespaced by node type) — namespace everything by product/node-type from day one.
+- Any cross-pipeline dependency or shared trigger (e.g., admin team's base-image-update webhook fires one pipeline and you need it to fire two now) — check what upstream automation might need updating to know your new pipeline exists.
+- Test/validation environment — if ECS validation runs against a real ECS cluster/service, you'll need an equivalent scratch EKS cluster wired in; don't assume the existing test infra "just works" for both.
+
+**One practical suggestion for the ticket itself:** frame the first PR/commit as a literal duplicate-and-rename of the ECS pipeline with a TODO marker on every stage that needs EKS-specific logic — that gives you (or whoever picks it up) a clean diff to review against the original, rather than trying to design the new pipeline and migrate content simultaneously.
+
+Want me to turn this into a stage-by-stage checklist doc you can paste into the ticket, or is this enough to work from once you're on the other machine?
