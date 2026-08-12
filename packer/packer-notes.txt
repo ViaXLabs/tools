@@ -1,0 +1,101 @@
+Quick note before I dive in: I'm reading "Istanbul" as a voice-to-text mangling of **Ansible** — that's the classic pairing with Packer for AMI builds, and nothing else fits the context. Let me know if you actually meant something else.
+
+Here's how to think through this systematically. The symptom you're describing — "boots, does Packer stuff, initializes, then a few minutes later just stops and Ansible sits there waiting" — has a handful of usual suspects, and the fix depends on catching it in the act rather than guessing blind.
+
+## First: stop letting Packer clean up the evidence
+
+By default, when a build hangs and you Ctrl-C or it eventually times out, Packer terminates the instance — so you lose the chance to look inside it. Two changes fix that:
+
+```bash
+PACKER_LOG=1 packer build -on-error=ask -debug your-template.pkr.hcl
+```
+
+- `-on-error=ask` pauses on failure instead of tearing the instance down, and gives you a shell prompt to decide what to do.
+- `-debug` pauses between every step, printing connection info (including the temp SSH key Packer generated) so you can SSH into the box yourself while it's mid-build.
+- `PACKER_LOG=1` gives you the raw communicator logs — you'll actually see *which* SSH/WinRM call is hanging instead of a silent spinner.
+
+Once you're in via that temp key (or SSM if you're using the `session_manager` communicator), check:
+
+```bash
+cloud-init status --wait      # is cloud-init actually done, or still running?
+sudo journalctl -b             # any reboot, OOM kill, or service failure right before it went quiet?
+tail -100 /var/log/cloud-init-output.log
+ps aux | grep -E 'yum|dnf|apt|dpkg'   # is a package manager holding a lock?
+```
+
+That single look will tell you which of the following buckets you're in.
+
+## The usual culprits, ranked by how often this exact pattern shows up
+
+**1. A reboot happens mid-provision and Packer/Ansible never notices**
+EKS AMI builds almost always do a `yum update` / kernel patch step. If that triggers a reboot (or the base AMI reboots itself for a pending kernel), SSH drops. If your template doesn't explicitly account for that, Packer just sits there retrying a dead connection — which looks exactly like "boots, does stuff, stops, hangs forever."
+
+Fix — make the reboot explicit instead of accidental:
+```hcl
+provisioner "shell" {
+  inline             = ["sudo reboot"]
+  expect_disconnect  = true
+}
+
+provisioner "shell" {
+  pause_before = "30s"
+  inline       = ["echo back up, cloud-init state:", "cloud-init status --wait"]
+}
+```
+
+**2. No outbound internet from the build subnet**
+This is the single most common one for people bringing up their *own* EKS AMI pipeline for the first time, because the "admin team" VPC/subnet you were handed for regular workloads often isn't the same as the subnet your Packer build launches into. If there's no NAT gateway/IGW, any `yum`/`dnf`/`curl` call in your playbook (pulling kubelet, containerd, the AWS CLI, S3 objects) will sit until it hits a TCP timeout — which is often several minutes, matching your "a few minutes later" description.
+
+Check: from inside the instance (via the debug SSH session above),
+```bash
+curl -v https://amazon-eks.s3.amazonaws.com --max-time 5
+```
+If that hangs or times out, it's networking, not Ansible.
+
+**3. IMDSv2 / hop-limit mismatch**
+If the source AMI enforces IMDSv2 (`http_tokens = required`) but a script in your playbook (or the EKS bootstrap script itself) is written assuming IMDSv1-style unauthenticated metadata calls, those calls fail or hang depending on how they're written. Also check `http_put_response_hop_limit` — if your Ansible tasks run inside a container/chroot during provisioning, hop limit 1 (default) won't let metadata calls through, hop limit 2 will.
+
+```hcl
+source "amazon-ebs" "eks_node" {
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+}
+```
+
+**4. Package manager lock contention**
+If the base AMI's cloud-init is still doing its own `yum`/`dnf` run (unattended upgrades, SSM agent update, etc.) when your Ansible provisioner connects and tries to install packages, you get a silent lock wait — no error, just nothing happening, sometimes indefinitely if the other process is itself stuck.
+
+Fix — make Ansible wait for cloud-init to actually finish before touching packages, as your very first task:
+```yaml
+- name: Wait for cloud-init to finish before touching packages
+  command: cloud-init status --wait
+  changed_when: false
+```
+
+**5. Instance undersized for the work**
+EKS AMI builds pull container images and binaries that can spike memory. On something like a `t3.micro`/`small`, an OOM kill can take out the process a playbook task is waiting on, without killing the SSH session itself — so Ansible just sits on that one task forever. `journalctl -b | grep -i oom` from your debug session will confirm this immediately.
+
+## Guardrails to bake into the repo so this doesn't happen again
+
+- **Bound your timeouts.** Don't let SSH/Ansible retry forever on a dead connection:
+  ```hcl
+  provisioner "ansible" {
+    playbook_file   = "./playbooks/eks-node.yml"
+    extra_arguments = [
+      "-vvv",
+      "--extra-vars", "ansible_ssh_common_args='-o ConnectTimeout=30 -o ServerAliveInterval=20 -o ServerAliveCountMax=3'"
+    ]
+  }
+  ```
+  A build that fails loudly in 2 minutes is much easier to debug than one that hangs for 45.
+
+- **Run Ansible verbose by default in CI** (`-vvv` in `extra_arguments`) — the cost is noisier logs, the payoff is you can see exactly which task is the one that's stuck instead of staring at a spinner.
+
+- **Split "system prep" from "EKS-specific" provisioning into separate playbooks/provisioner blocks.** That way when a build hangs, the Packer log itself tells you which phase it died in without needing to SSH in at all.
+
+- **Pin your source AMI and record its ID in state/output.** If the admin team updates their base image periodically, an appliance-side change (new IMDS enforcement, new SSM agent version, etc.) can silently break your pipeline and this exact symptom is the first thing you'd see.
+
+If you can grab the tail of the Packer log (`PACKER_LOG=1`) right at the point it stalls, or tell me the base AMI (Amazon Linux 2/2023, Bottlerocket, custom), instance type, and whether the build subnet has NAT/IGW access, I can narrow this down to one specific fix instead of a checklist.
