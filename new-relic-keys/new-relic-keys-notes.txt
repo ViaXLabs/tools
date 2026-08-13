@@ -1,0 +1,99 @@
+Got it — the core issue isn't really "we had a leak," it's "we have two open front doors: hardcoded secrets in repos, and no consistent way to get secrets into apps *at runtime*, not just at pipeline time." Here's how I'd tackle both, plus the immediate cleanup.
+
+## 1. Contain the current New Relic exposure first
+
+Since the key already leaked to a chat (assume it's burned, full stop):
+
+- Confirm the New Relic key was fully revoked/rotated at the source (not just regenerated — make sure the old key returns 403s now).
+- Push the new key to all ~12 vaults from one script/runbook, not by hand twelve times — write a small script that takes the new value and calls each vault's write API in a loop. Manual updates across 12 vaults is exactly how you end up with drift (11 updated, 1 forgotten, leak #2 in six months).
+- Grep your repos for the *old* key value (or its last 6-8 chars) across all branches and history, not just main — if it's hardcoded in one place it's probably hardcoded in three.
+- Check Harness pipeline logs, build artifacts, and container images for the old value too — if it was ever baked into an image layer, that image needs rebuilding, not just the source file fixed.
+
+## 2. Stop new hardcoded secrets from landing (detection layer)
+
+Good news: you're already paying for the tooling to do this. Harness has a built-in Gitleaks integration in two places Harness offers a built-in Secret Detection step using Gitleaks in Security Testing Orchestration, and Harness Code (its git hosting) has integrated Gitleaks that can block pushes containing recognized secret patterns:
+
+- **Harness Code push protection** (if you're on Harness Code as the git host) — blocks the commit at push time if a secret pattern is detected. This is the cheapest win if you have it.
+- **Harness STO "Secret Detection" built-in step** — add this as a stage in every pipeline. It's free (uses open-source Gitleaks under the hood) and needs almost no config to get running. Run it once against full history first to inventory what's already out there, then run it on every PR/push going forward to catch new ones.
+- Use a `.gitleaks.toml` allowlist for keys you've already rotated so old commits don't keep flagging noise forever, but log every allowlisted entry with a reason — that list becomes your audit trail.
+
+This gets you visibility. It doesn't fix the underlying reason people hardcode secrets, which is —
+
+## 3. The actual fix: inject secrets at runtime, not build time
+
+This is your real question — "how do we use Vault connectors beyond pipelines." The pattern that matters here is: **the secret should never exist as a byte in the repo, the image, or a config file that gets committed — it should be materialized only in memory, at the moment the process starts, on the machine that's running it.** Pipeline-time Vault fetches solve "how do I deploy," but they don't solve "how does the running app get its New Relic key" — that's a separate injection point, and it's the one you're missing.
+
+Here's the menu, by where the workload actually runs:
+
+**If you're on Kubernetes:**
+
+| Pattern | How it works | Best for |
+|---|---|---|
+| **Vault Agent Injector** | Annotate the pod; a sidecar authenticates to Vault and renders secrets into an in-memory volume before your app container starts | Apps that read secrets from a file path (like `newrelic.ini`) |
+| **Vault Secrets Operator (VSO)** | A cluster-wide operator watches CRDs and syncs Vault secrets into native Kubernetes Secret objects, with automatic rotation | Teams that want secrets to look like normal k8s Secrets to app owners, with drift detection and auto-remediation built in |
+| **External Secrets Operator (ESO)** | Same idea as VSO but backend-agnostic — useful if some things are still in AWS Secrets Manager during a migration | Mixed-backend transition periods |
+| **Vault CSI Provider** | Mounts secrets directly as an ephemeral volume, no k8s Secret object created at all | Highest-sensitivity secrets where you don't even want them in etcd |
+
+**If you're on VMs / bare metal / non-k8s containers:**
+
+- **`envconsul`** — wraps your app's start command, fetches secrets from Vault, sets them as environment variables for that one process, and never writes them to disk. This is probably your best fit for that New Relic `.ini`-consuming runtime you described.
+- **Vault Agent in template mode** (no k8s needed) — runs as a local daemon/sidecar process, authenticates via AppRole, and renders a config file from a template + live Vault data on a refresh interval.
+
+**Either way**, the app authenticates to Vault itself — via Kubernetes service account JWT, AppRole, or machine identity — gets a short-lived token, and pulls what it needs. No secret ever sits in git.
+
+## 4. Specifically for the New Relic hardcoding problem
+
+Every New Relic agent supports reading the license key from an environment variable instead of the config file the infrastructure agent uses NRIA_LICENSE_KEY and other agents support environment-variable configuration as an alternative to the file-based settings. So the fix isn't "put a placeholder in the ini file" — it's:
+
+1. **Delete the `license_key` line from `newrelic.ini`/`newrelic.yml`/`newrelic-infra.yml` in the repo entirely.** One important gotcha: for several agents, a value in the config file overrides the environment variable, not the other way around — so if you leave even a dummy value in the file, it'll win and mask the real key coming from Vault. The line needs to be gone, not blanked.
+2. Set the license key via env var (`NEW_RELIC_LICENSE_KEY`, `NRIA_LICENSE_KEY`, etc. depending on agent) at container start, sourced from Vault via whichever runtime pattern above fits your deployment target.
+3. Do the same audit for the Dockerfiles and YAML files you mentioned — anywhere you see `ENV NEW_RELIC_LICENSE_KEY=...` or a hardcoded value in a k8s manifest, that's a candidate to replace with a Vault-sourced reference (VSO-synced Secret ref, or Agent Injector annotation).
+
+## 5. Getting your ~12 vaults under control
+
+Twelve vaults for one secret is a symptom of vault sprawl, not just a rotation inconvenience. Worth doing in parallel:
+
+- Build a simple inventory: which vault, which team/app owns it, which secret paths live in it, who has write access. If you don't have this today, that's why rotation took a scramble.
+- Standardize a secret path naming convention (`<env>/<team>/<app>/<secret-name>`) so "where does the New Relic key live" has one predictable answer per vault instead of tribal knowledge.
+- If several of those 12 are really the same org boundary, look at **Vault namespaces** (Enterprise/self-managed feature) to consolidate under one cluster with logical separation, instead of 12 fully separate Vault installs to keep in sync by hand.
+- One quick heads-up unrelated to your setup but worth checking: as part of the IBM transition, the standalone SaaS product "HCP Vault Secrets" has been discontinued with end of sale announced June 30, 2025 and final end-of-life July 1, 2026, with existing customers directed to migrate to HCP Vault Dedicated or Vault Community Edition. If any of your 12 are that specific SaaS flavor rather than self-managed Vault, that's a forced migration on a clock, separate from everything else here.
+
+## 6. Getting teams off S3 / ad hoc stores
+
+Same tooling does double duty here:
+
+- Inventory who's reading secrets from S3 buckets today (bucket policies + CloudTrail access logs will tell you fast).
+- Migrate them the same way as above — VSO/ESO syncing Vault secrets into native k8s Secrets, or direct app-side Vault API calls for non-k8s workloads.
+- The forcing function that actually works: once migrated, revoke the IAM permissions that let that app read the S3 bucket. "It still works if I don't migrate" is why these things linger for years — take away the option.
+
+## Suggested phasing
+
+- **Weeks 1-2:** Finish New Relic rotation across all 12 vaults, turn on Harness STO Gitleaks scanning on every pipeline (detection, not yet enforcement).
+- **Weeks 3-6:** Fix the specific New Relic hardcoding pattern repo-by-repo (delete keys from ini/yaml/Dockerfiles, wire up env-var injection from Vault).
+- **Weeks 6-10:** Roll out Vault Agent Injector or VSO to your highest-risk repos first (the ones that already leaked or are internet-facing).
+- **Ongoing:** Flip Gitleaks from detect-only to block-on-push once teams have had a few weeks to clean up; build the vault inventory; start the S3 decommission conversations.
+
+Want me to draft an actual Vault Agent template/annotation example for the New Relic case, or a starter `.gitleaks.toml` config, so you've got something concrete to hand to a team?
+
+Alright — let's build the actual kit. First, one important heads-up before I hand you the Gitleaks config: the tool is now in maintenance mode. Its original author moved on and launched a successor called **Betterleaks** in February 2026 Gitleaks is feature complete, with future releases being security patches only as the maintainer's focus shifts to a successor project. Harness's built-in scanner still runs on Gitleaks, so that stays your primary pipeline/push-protection layer — but worth knowing it's not where active development is happening anymore if you're picking new tooling later.
+
+Now, the kit:Eight files, all in the same kit — `README.md` is the map, everything else is copy-paste-ready:
+
+- **`.gitleaks.toml`** / **`.pre-commit-config.yaml`** — catches hardcoded secrets on a dev's machine and in scans, with a custom rule tuned to New Relic's 40-char hex license key format
+- **`vault-policy-newrelic.hcl`** — least-privilege policy scoped to exactly one secret path, plus the CLI commands to wire up the AppRole or Kubernetes auth role
+- **`vault-agent.hcl`** + **`newrelic.ini.ctmpl`** — the non-Kubernetes runtime pattern (VM/bare metal): a local agent that renders the real config file to disk only at runtime
+- **`k8s-vault-agent-injector.yaml`** — Kubernetes sidecar pattern for apps that read a config file
+- **`k8s-vault-secrets-operator.yaml`** — Kubernetes VSO pattern for apps that expect a native `Secret`/env var, with auto re-sync on rotation
+
+The README's Part 2 is the "how do I use Vault in non-pipeline files" answer in full — it walks through the "secret zero" problem (how a workload authenticates to Vault at all without another hardcoded credential), the decision tree for which pattern fits which platform, and exactly how those pieces chain together for your New Relic case specifically, including the gotcha where a leftover value in the config file can silently override what Vault just injected.
+
+Start with the pilot suggested at the bottom of the README (New Relic on whichever platform is easiest to touch first), confirm it end to end, then roll the pre-commit hook and Harness STO scan out org-wide before repeating it across the other repos.
+
+ECS doesn't have anything like Kubernetes' admission-webhook injector, but the shape of the fix is identical: **a Vault Agent sidecar in the task, authenticating off the task's own IAM role (no bootstrap secret needed — same trick as the Kubernetes service-account-token, just AWS's version of it), rendering the file to a volume the app container reads from.** HashiCorp has an official pattern for exactly this. And the nice bonus: when you cut over to EKS later, your Vault policy and KV path don't change — only the auth method swaps from AWS IAM to Kubernetes.Also update the file map table at the top and the rollout order to mention the ECS step:Two new files, plus the README now has a **Part 3 — ECS today, EKS later** section:
+
+- **`ecs-task-definition-vault-sidecar.json`** — a full Fargate task definition with a `vault-agent` sidecar (`essential: false`, runs once with `-exit-after-auth`) and your `app` container gated behind it with `"dependsOn": [{"condition": "SUCCESS"}]`. If Vault auth fails, the app never starts — fail closed, not open. They share an ephemeral task volume, no EFS needed on Fargate 1.4+ or EC2.
+- **`vault-agent-ecs.hcl`** — the agent config using the **AWS IAM auth method**, which checks the task's own IAM role instead of a Kubernetes service account token. Same "no bootstrap secret" trick, just AWS's version of it. The Vault-side wiring commands are in the comments at the bottom.
+
+The key thing that makes this worth doing now rather than waiting for EKS: `vault-policy-newrelic.hcl` and the `kv/data/prod/newrelic` path don't change at all when you migrate. Only the auth method swaps — AWS IAM role → Kubernetes service account. The secret itself never moves.
+
+For your actual `newrelic.ini` files: same fix as before, just delivered differently — delete `license_key` from the file in the repo and image entirely, point `NEW_RELIC_CONFIG_FILE` at `/vault/secrets/newrelic.ini` (the path `vault-agent` renders to), and let the sidecar put the real value there at task startup.

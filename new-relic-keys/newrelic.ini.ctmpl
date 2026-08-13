@@ -1,0 +1,10 @@
+{{- /* Rendered by Vault Agent (see vault-agent.hcl) into a real config file at runtime.
+       This .ctmpl file is safe to commit — it contains no secret material, only the
+       lookup instruction. The rendered output (newrelic-infra.ini) never is. */ -}}
+[newrelic]
+{{ with secret "kv/data/prod/newrelic" }}
+license_key = {{ .Data.data.license_key }}
+{{ end }}
+app_name    = my-service
+monitor_mode = true
+log_level   = info

@@ -1,0 +1,19 @@
+# Catches hardcoded secrets on a developer's own machine, before a commit is even made —
+# this runs "left of" any push-protection or pipeline scan.
+#
+# Setup:
+#   pip install pre-commit --break-system-packages
+#   pre-commit install
+#
+# Check https://github.com/gitleaks/gitleaks/releases for the current tag before rolling
+# this out org-wide; pin it explicitly rather than tracking a moving branch.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2   # verify against the latest release tag periodically
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret scan)
+        entry: gitleaks protect --staged --verbose --redact --config .gitleaks.toml
+        language: golang
+        pass_filenames: false

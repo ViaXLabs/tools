@@ -1,0 +1,54 @@
+# Kubernetes pattern #1: Vault Agent Injector.
+#
+# A mutating webhook adds a Vault Agent sidecar to this pod automatically based on the
+# annotations below. The sidecar authenticates via the Kubernetes auth method (using this
+# pod's own service account token — no bootstrap secret needed, see README.md Part 2,
+# Question 1), renders the templated file to a shared in-memory volume, and the app
+# container reads it from there.
+#
+# One-time setup on the Vault side:
+#   vault write auth/kubernetes/role/my-service \
+#     bound_service_account_names=my-service \
+#     bound_service_account_namespaces=prod \
+#     policies=newrelic-read \
+#     ttl=1h
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-service
+  namespace: prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-service
+  template:
+    metadata:
+      labels:
+        app: my-service
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "my-service"
+        vault.hashicorp.com/agent-inject-secret-newrelic.ini: "kv/data/prod/newrelic"
+        vault.hashicorp.com/agent-inject-template-newrelic.ini: |
+          {{- with secret "kv/data/prod/newrelic" -}}
+          [newrelic]
+          license_key = {{ .Data.data.license_key }}
+          app_name = my-service
+          {{- end -}}
+        vault.hashicorp.com/agent-inject-file-newrelic.ini: "newrelic.ini"
+        # Renders before the app container starts, so there's no race on first boot.
+        vault.hashicorp.com/agent-pre-populate-only: "false"
+    spec:
+      serviceAccountName: my-service   # must match bound_service_account_names above
+      containers:
+        - name: my-service
+          image: registry.example.com/my-service:latest
+          env:
+            # Point the New Relic agent at the file Vault Agent just rendered.
+            # NOTE: make sure this same value isn't also hardcoded inside the image
+            # or baked into a ConfigMap — that would silently win over this file for
+            # some agent versions. See README.md step 4.
+            - name: NEW_RELIC_CONFIG_FILE
+              value: /vault/secrets/newrelic.ini

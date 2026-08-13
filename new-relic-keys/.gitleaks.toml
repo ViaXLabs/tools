@@ -1,0 +1,55 @@
+# Starter Gitleaks config — layer on top of Gitleaks' default ruleset rather than replacing it.
+#
+# Usage:
+#   Local scan:        gitleaks detect --source . --config .gitleaks.toml
+#   Full history scan: gitleaks detect --source . --config .gitleaks.toml --log-opts="--all"
+#   Pre-commit:         see .pre-commit-config.yaml
+#   Harness STO:        Security Testing Orchestration -> Secret Detection (built-in Gitleaks
+#                        scanner) can be pointed at this file for custom-rule coverage
+#   Harness Code:        push-protection uses Gitleaks' own default ruleset; this file is for
+#                        local runs, pre-commit, and full-history/CI scans
+#
+# NOTE: tune the regexes below against a few real (already-rotated) samples before relying on
+# them — this is a starting point, not a certified pattern.
+
+title = "org-secret-scan"
+
+[extend]
+# Pulls in Gitleaks' full default ruleset (AWS keys, GitHub tokens, Slack webhooks, private
+# keys, etc.) so this file only needs to add what's missing.
+useDefault = true
+
+# --- Custom rule: New Relic license key, keyword-anchored ---
+# New Relic license keys are a 40-character hex string tied to an account.
+[[rules]]
+id          = "new-relic-license-key"
+description = "New Relic ingest/license key (40-char hex) near a recognizable key name"
+regex       = '''(?i)(new[_-]?relic|nria|nr[_-]?infra)[a-z0-9_\-]{0,20}(license[_-]?key)?['"\s:=]{1,5}([a-f0-9]{40})'''
+secretGroup = 3
+keywords = [
+  "new_relic_license_key",
+  "newrelic_license_key",
+  "nria_license_key",
+  "NEW_RELIC_LICENSE_KEY",
+  "NRIA_LICENSE_KEY",
+]
+
+# --- Custom rule: bare license_key = <40-hex> inside a New Relic-flavored config file ---
+# Catches the "just a bare value in an .ini/.yml" case even without an obvious keyword nearby.
+[[rules]]
+id          = "new-relic-license-key-bare-hex"
+description = "Bare 40-char hex value on a license_key line inside a New Relic config file"
+regex       = '''(?i)license_key\s*[:=]\s*['"]?([a-f0-9]{40})['"]?'''
+secretGroup = 1
+path        = '''(?i)(newrelic|new-relic|nr-infra).*\.(ini|yml|yaml|config|cfg)$'''
+
+# --- Allowlist: rotated/deactivated keys and known-safe fixtures ---
+[allowlist]
+description = "Rotated or known-safe values — keep this list current or old scans re-flag fixed issues forever"
+regexes = [
+  # '''<old-rotated-key-fragment-here>''',   # add once a leaked key is confirmed rotated
+]
+paths = [
+  '''(?i)\.gitleaks\.toml''',
+  '''(?i)test/fixtures/''',
+]

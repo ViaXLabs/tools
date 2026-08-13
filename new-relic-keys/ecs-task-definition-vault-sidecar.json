@@ -1,0 +1,58 @@
+{
+  "family": "my-service",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/my-service-task-role",
+  "volumes": [
+    {
+      "name": "vault-secrets"
+    }
+  ],
+  "containerDefinitions": [
+    {
+      "name": "vault-agent",
+      "image": "hashicorp/vault:1.19",
+      "essential": false,
+      "entryPoint": ["vault", "agent", "-config=/vault/config/agent.hcl", "-exit-after-auth"],
+      "mountPoints": [
+        { "sourceVolume": "vault-secrets", "containerPath": "/vault/secrets" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/my-service/vault-agent",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "vault-agent"
+        }
+      }
+    },
+    {
+      "name": "app",
+      "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-service:latest",
+      "essential": true,
+      "dependsOn": [
+        { "containerName": "vault-agent", "condition": "SUCCESS" }
+      ],
+      "mountPoints": [
+        { "sourceVolume": "vault-secrets", "containerPath": "/vault/secrets", "readOnly": true }
+      ],
+      "environment": [
+        { "name": "NEW_RELIC_CONFIG_FILE", "value": "/vault/secrets/newrelic.ini" }
+      ],
+      "portMappings": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/my-service/app",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "app"
+        }
+      }
+    }
+  ]
+}
