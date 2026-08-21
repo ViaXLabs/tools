@@ -1,0 +1,83 @@
+Good translation check first: I'm reading **"CNK"** as **KMS CMK** (Customer Managed Key) and **"ECS AMI"** as the same **EKS AMI** pipeline from before — those both fit the sentence and nothing else does. Also assuming "EBS" is Elastic Block Store (not "Elastic Beanstalk"). Flag me if any of that's wrong.
+
+No code needed yet — this class of problem has a small number of root causes, and I can point you at exactly what to look for.
+
+## The mental model that trips people up
+
+In a Packer `amazon-ebs` build, there are **two separate volumes** that can touch your CMK, and mixing them up is the #1 cause of "I set the key alias and it's still broken":
+
+1. **The build instance's root volume** — the temp EC2 instance Packer launches to run your Ansible/Molecule provisioning. Its encryption comes from `launch_block_device_mappings` (or from the source AMI's own encryption + account default).
+2. **The final baked AMI's snapshot** — the artifact Packer produces at the end. Its encryption comes from `encrypt_boot` + `kms_key_id` (and `region_kms_key_ids` if you copy to multiple regions).
+
+If your team set the key on one of these but not the other, you can get a build that *provisions fine* but fails/hangs at the snapshot-copy or AMI-registration step — which matches "packer stuff happens, then EBS gets weird."
+
+## Ranked list of likely causes
+
+**1. Key policy doesn't grant the Packer IAM role (or the build instance's IAM role) permission**
+This is the most common one. A CMK needs an explicit key policy grant — being an admin on the account is not enough once you're using a customer-managed key instead of the AWS-managed default. The role Packer assumes needs at minimum:
+```
+kms:DescribeKey
+kms:CreateGrant
+kms:Encrypt
+kms:Decrypt
+kms:ReEncrypt*
+kms:GenerateDataKey*
+```
+Symptom: silent hang or `AccessDeniedException` deep in the CopyImage/CreateSnapshot call, often *not* surfaced clearly by Packer — it just sits retrying or the snapshot sits in `pending`/`error`.
+
+**2. Alias vs. Key ARN, and region scoping**
+KMS aliases are **region-scoped**. If your `kms_key_id` field has an alias (`alias/eks-ami-key`) but the build launches in a different region than where that alias lives, resolution fails or silently falls back to something unexpected. If you're doing multi-region `ami_regions`, a single alias/ARN in `kms_key_id` won't work for the other regions — you need `region_kms_key_ids` as a map of region → key ARN, one CMK per region, each with its own key policy.
+
+**3. Source AMI is itself encrypted with a *different* CMK**
+If the admin team's base image already has an encrypted root volume under their own CMK, and your account/role doesn't have decrypt rights on *their* key, the build instance can fail to boot cleanly (attach/mount hangs) even before your provisioners run. This is worth checking even though it sounds like your Ansible stage is getting further than that — cross-account CMK sharing needs both the key policy on their key **and** a shared AMI permission, and it's easy for one to be updated without the other.
+
+**4. Mismatch between `encrypt_boot` and `kms_key_id` presence**
+If `kms_key_id` is set but `encrypt_boot` is left `false`/unset (or vice versa), depending on Packer plugin version this can either be ignored, error, or half-apply. Worth eyeballing both are present together and consistent.
+
+**5. Grant creation succeeds but the grant token isn't propagated to a downstream copy step**
+If you're doing `ami_regions` (copy to other regions) or `ami_users`/`snapshot_users` (share to other accounts) *and* it's encrypted, AWS needs to create a grant on the target principal too. Sharing an encrypted AMI/snapshot to another account without also updating that CMK's key policy to allow the target account principal is a classic silent-stuck state — the copy just never completes.
+
+## What to actually search for / run
+
+Since you can't paste the template, have whoever owns it grep for these fields in the `.pkr.hcl`:
+- `kms_key_id`
+- `encrypt_boot`
+- `region_kms_key_ids`
+- `launch_block_device_mappings` — check if it has its own `kms_key_id` distinct from the top-level one
+- `ami_users` / `snapshot_users` — if present, that's the cross-account-sharing path, which needs matching key policy updates
+
+On the AWS side, pull the actual evidence instead of guessing:
+
+```bash
+# Find snapshots stuck or errored, and why
+aws ec2 describe-snapshots --owner-ids self \
+  --query 'Snapshots[*].[SnapshotId,State,StateMessage,KmsKeyId]' --output table
+
+# Confirm the AMI's actual registered key vs what you think you set
+aws ec2 describe-images --image-ids <ami-id> \
+  --query 'Images[*].BlockDeviceMappings[*].Ebs.KmsKeyId'
+
+# Check the key policy — does it actually name your Packer role/instance profile?
+aws kms get-key-policy --key-id alias/eks-ami-key --policy-name default --output text
+
+# Check existing grants on the key
+aws kms list-grants --key-id alias/eks-ami-key
+
+# The single most useful thing: search CloudTrail for denied KMS calls during the build window
+aws cloudtrail lookup-events \
+  --lookup-attributes AttributeKey=EventSource,AttributeValue=kms.amazonaws.com \
+  --start-time "<build start time>" \
+  --query "Events[?contains(CloudTrailEvent, 'AccessDenied')]"
+```
+
+That last CloudTrail query is usually the fastest path to ground truth — it'll show you exactly which principal, which key, and which KMS action got denied, instead of you inferring it from a hang.
+
+## IAM/key-policy checklist to hand to whoever manages the CMK
+
+- [ ] Packer's execution role (the one your CI/CD assumes) is named as a principal in the CMK's key policy with `kms:CreateGrant`, `kms:DescribeKey`, `kms:Encrypt`, `kms:Decrypt`, `kms:ReEncrypt*`, `kms:GenerateDataKey*`
+- [ ] If the build instance profile is *different* from the Packer execution role, it also needs `kms:Decrypt` at minimum (to mount an encrypted root volume)
+- [ ] If copying to multiple regions: one CMK per region, each with the same policy, referenced via `region_kms_key_ids`
+- [ ] If sharing the AMI to other accounts: those accounts' roles/users are also named in the key policy, in addition to the AMI-level share permission
+- [ ] The alias used in the template resolves in the **same region** as the build
+
+If you can get a sanitized version of the `amazon-ebs` builder block (just the KMS/encryption-related lines, nothing else) pasted in, I can look at the actual field wiring instead of the general checklist — that'll get you to the specific bug a lot faster than the list above.
