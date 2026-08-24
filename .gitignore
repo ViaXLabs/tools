@@ -145,10 +145,10 @@ target/
 #########################
 .github/workflows/
 .gitlab-ci.yml
-docker-compose.yml
-Dockerfile
-jenkins/
-jenkinsfile
+# docker-compose.yml
+# Dockerfile
+# jenkins/
+# jenkinsfile
 
 # Testing #
 ###########
@@ -159,6 +159,7 @@ test-results/
 .tox/
 
 # Backup Files #
+################
 ################
 *~
 *.bak

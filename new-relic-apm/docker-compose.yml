@@ -1,0 +1,7 @@
+services:
+  hello-java:
+    build: .
+    environment:
+      NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY}
+      NEW_RELIC_APP_NAME: hello-java-sample
+      NEW_RELIC_LABELS: "Environment:dev;Team:platform;Service:hello-java-sample"
