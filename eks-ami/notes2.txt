@@ -1,0 +1,71 @@
+Good news on this one: that error message is actually AWS being very specific about what's wrong, not a mystery. Let me decode it and then get into why it's probably tied to that "use an existing AMI as the base" branch of your pipeline.
+
+(One phrase I couldn't parse — "team paying all this stuff" — I'm going to skip since it doesn't change the technical answer. Flag it if it was actually a specific tool name.)
+
+## What the error actually means
+
+> *"Snapshots encrypted with the AWS Managed CMK can't be shared. Specify another snapshot."*
+
+This is a **hard AWS restriction, not a config bug you can grant your way around**. Here's the distinction that matters:
+
+- **AWS managed key** (`alias/aws/ebs`) — the default key AWS uses when a volume/snapshot gets encrypted and nobody specified a key. You don't own its key policy. You *cannot* edit it to add another account as a principal. Because of that, AWS flatly refuses to let you share or copy across accounts anything encrypted under it — there'd be no way for the target account to ever get decrypt rights.
+- **Customer managed key (CMK)** — a key in *your* KMS, with a key policy *you* control. You can add another account's principal to that policy, which is the only mechanism that makes cross-account sharing of an encrypted snapshot/AMI possible at all.
+
+So the fix isn't a permission tweak — it's making sure the AMI you're trying to share was actually encrypted with your CMK in the first place, not the account default.
+
+## Why this is probably specific to the "existing AMI" path
+
+In your normal full build (Packer → Ansible → Molecule → new AMI), Packer typically forces the resulting snapshot's encryption via `encrypt_boot` + `kms_key_id` in the builder config — so no matter what the *source* AMI's encryption was, the *output* AMI ends up encrypted under your CMK.
+
+The "skip the build, just promote an existing AMI" branch likely **doesn't go through that same forcing step**. If it's just calling `copy-image` or `modify-image-attribute` directly against an AMI that happens to have been encrypted under `aws/ebs` (very common if it's an older image, or one built before your CMK policy was standardized, or built by the admin team under their account's default encryption settings), you get exactly this error the moment you try to share it.
+
+## How to confirm it
+
+```bash
+aws ec2 describe-snapshots --snapshot-ids <snap-id> \
+  --query 'Snapshots[*].[SnapshotId,Encrypted,KmsKeyId]' --output table
+```
+
+If `KmsKeyId` comes back as `alias/aws/ebs` (or an ARN ending in a key that resolves to that alias), that confirms it — this snapshot can never be shared as-is, no matter what IAM/key-policy changes you make.
+
+You can also check the account-level default in case this is systemic rather than a one-off:
+
+```bash
+aws ec2 get-ebs-default-kms-key-id
+aws ec2 get-ebs-encryption-by-default
+```
+
+If the account default points at `aws/ebs`, any pipeline path that doesn't explicitly override encryption settings will keep producing unshareable snapshots.
+
+## The fix: re-encrypt before you share
+
+You need to produce a *new* AMI/snapshot encrypted under your CMK from the existing one. The cleanest way:
+
+```bash
+aws ec2 copy-image \
+  --source-image-id ami-XXXXXXXX \
+  --source-region us-east-1 \
+  --region us-east-1 \
+  --name "eks-node-reencrypted-<date>" \
+  --encrypted \
+  --kms-key-id alias/your-eks-ami-key
+```
+
+That `--encrypted --kms-key-id` combination is what forces re-encryption during the copy, rather than the copy just inheriting the source's existing encryption state (which is the default behavior if you omit those flags — and is almost certainly why this slipped through).
+
+**Then**, before the actual cross-account share, make sure your CMK's key policy already includes the target account(s) as principals with at least:
+```
+kms:DescribeKey
+kms:CreateGrant
+kms:Decrypt
+```
+(This is the piece from your last question — re-encrypting fixes *this* error, but if the key policy doesn't name the target account, the subsequent `modify-image-attribute` for launch permissions will just fail differently, with an access-denied instead of this invalid-parameter error.)
+
+## Closing the gap so it doesn't recur
+
+Since this is a pipeline with two branches (full build vs. existing-AMI-as-base), the durable fix is making both branches converge on the same encryption guarantee instead of trusting the second one to inherit it correctly:
+
+- Add a mandatory "re-encrypt with our CMK" step to the existing-AMI branch, right before the cross-account copy/share step — treat it as non-optional, not conditional on whether the source happens to already be encrypted correctly.
+- Or, simpler: set the account's default EBS encryption key to your CMK (`aws ec2 enable-ebs-encryption-by-default` + `modify-ebs-default-kms-key-id`) so *any* path that creates a snapshot without an explicit override still lands on your CMK instead of `aws/ebs`. This is a good guardrail regardless of the pipeline logic, since it removes an entire class of "someone forgot to set kms_key_id" bugs.
+
+If you can grab the `KmsKeyId` output from the `describe-snapshots` call above, that'll confirm whether it's this exact issue or something adjacent — happy to narrow further from there.
