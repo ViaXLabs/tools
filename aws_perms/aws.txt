@@ -1,0 +1,27 @@
+That refines the picture — but worth being precise about it: the AWS CLI and "the API" don't really use two different authentication *protocols*. Everything goes through SigV4 signing, and if a client reads the shared `~/.aws/config`/`~/.aws/credentials` file, `credential_process` is honored the same way in principle. What actually differs, and what very plausibly explains "some commands work, others don't," is **which client is making the call and whether that specific client's credential provider chain fully implements the shared config spec**.
+
+Two concrete gotchas that fit your symptoms well:
+
+**1. Not every SDK reads the shared config file by default.** The Go SDK v1 — and critically, anything *built on* Go SDK v1, including Terraform and a fair number of infra tools — does **not** load `~/.aws/config` (and therefore ignores `credential_process`, named profiles, etc.) unless `AWS_SDK_LOAD_CONFIG=1` is explicitly set in the environment. If you get something like "NoCredentialProviders: no valid providers in chain," you may need to set the environment variable AWS_SDK_LOAD_CONFIG=1, because the Go SDK, and applications built with the Go SDK like Terraform, don't automatically use your .aws/config file. If your pipeline mixes `aws` CLI steps with anything Go-based (Terraform, some Docker/K8s tooling, custom Go binaries) in the same Harness template, and that env var isn't set consistently across every step/container layer, you'd get exactly this pattern — CLI commands resolve the profile fine, Go-based tooling silently falls through to IMDS or fails to find the profile at all.
+
+**2. Process credentials aren't cached by the SDK — your script owns that.** The SDK does not cache credentials from an external process, unlike credentials from an assumed role — if caching is needed, it must be implemented in the external process itself. If your refresh script assumes the CLI/SDK is caching on its behalf, or two pipeline steps invoke it concurrently without locking, you can get intermittent failures that look exactly like "detected in certain circumstances but not others" — especially under Docker/parallel pipeline execution where two processes hit the script at once and one gets a half-written or racing token.
+
+To actually isolate this, for one failing command and one working command, back to back, in the same pipeline step:
+
+```bash
+# What's actually driving the call — CLI, or something else?
+which aws
+type aws          # catches shell aliases/wrapper functions masking the real binary
+
+# Env state at the moment of the call
+env | grep -i aws
+
+# Does this specific client even load the shared config file?
+echo $AWS_SDK_LOAD_CONFIG
+
+# For Terraform specifically, if it's in the mix:
+terraform version
+env | grep -i AWS_SDK_LOAD_CONFIG
+```
+
+If you can tell me what's actually issuing "the API" calls that differ from the CLI ones — Terraform, boto3, a different language SDK, raw HTTP/requests — I can point you at the exact provider-chain behavior for that client rather than the general case.
