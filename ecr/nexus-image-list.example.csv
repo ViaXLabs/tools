@@ -1,0 +1,7 @@
+# nexus_image,ecr_repo_name,ecr_tag
+# - ecr_repo_name / ecr_tag are optional; leave blank to derive from nexus_image
+# - lines starting with # and blank lines are ignored
+nexus_image,ecr_repo_name,ecr_tag
+nexus.company.com/docker-hosted/service-a:1.4.2,,
+nexus.company.com/docker-hosted/service-b:2.0.0,team/service-b,2.0.0
+nexus.company.com/docker-hosted/legacy-app:latest,legacy-app,legacy-app-2026-08-26

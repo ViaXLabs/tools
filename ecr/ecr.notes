@@ -1,0 +1,42 @@
+Good news: none of this is exotic — it's a pretty standard pattern. Let me lay out the approach, then hand you working files.
+
+**The shape of it:**
+1. Your existing stage already builds the image and pushes to Nexus — so Docker is already available in that stage. You just add one more step after it that logs into ECR and pushes the *same* image, no rebuild needed.
+2. Because you have two AWS accounts, you need two sets of credentials and two account IDs. Simplest way: an IAM user per account, each scoped to ECR push only, stored as Harness secrets, and either two steps (one per env, gated by a condition) or two copies of the stage/step in your prod vs non-prod pipeline.
+3. Auth to ECR itself is just `aws ecr get-login-password | docker login` — that part really is as simple as you hoped.
+
+I'll create:
+- an IAM policy (least-privilege, apply once per AWS account)
+- a push script (does login, optional repo auto-create, tag, push)
+- a Harness `Run` step YAML snippet showing where this plugs in, with the non-prod/prod split**To wire it up:**
+
+1. **In each AWS account** (non-prod and prod), create an IAM user (e.g. `ci-ecr-push`) with the policy JSON above attached — swap `REGION`/`ACCOUNT_ID` for each account. Generate an access key for each user.
+2. **In Harness**, add four secrets: `aws_ecr_nonprod_access_key`, `aws_ecr_nonprod_secret_key`, `aws_ecr_prod_access_key`, `aws_ecr_prod_secret_key`.
+3. **Commit `push-to-ecr.sh`** into your repo at `ci/scripts/push-to-ecr.sh` (or wherever — just update the path in the YAML).
+4. **Drop the `Run` step** into your pipeline right after the Nexus push, filling in your two account IDs and region.
+5. Test against non-prod first — the script auto-creates the ECR repo if it doesn't exist, so first run will create it, subsequent runs just push new tags.
+
+A couple of things worth knowing since you're new to ECR:
+- `aws ecr get-login-password` gives you a token that's valid for **12 hours** — that's what `docker login` uses, it's not a static ECR password.
+- Repo names in ECR can include slashes (`team/my-service`), which is handy if you want to mirror your Nexus repo layout.
+- Static access keys work fine and match what you asked for, but if your Harness delegate ever runs on EC2/EKS, switching to an instance role / IRSA with `sts:AssumeRole` per account is the more secure route later — no keys to rotate at all. Happy to sketch that out too if you want it now instead.
+
+One thing I assumed: that your Nexus-push step already runs `docker build`/`docker push` inside a stage where Docker is reachable (not through some external tool). If your setup is different — say a VM build infra, or you're not sure whether this stage has Docker-in-Docker — tell me a bit about how the Nexus push actually happens and I'll adjust the step image/wiring accordingly.
+
+Got it — let's add a bulk migration script to the set: point it at a report/list of Nexus images, and it pulls each one, pushes it into ECR, with retries (since you already know Nexus flakes) and a results log so you can see what worked.
+
+One assumption I'm making: your "report" is a CSV (or even just a plain list, one image per line — the script handles both). Each row is `nexus_image,ecr_repo_name,ecr_tag` where the last two columns are optional — if you leave them blank, the ECR repo name and tag get derived straight from the Nexus image reference. That should cover "just point me at a flat list" as well as "I want to rename things on the way in."Now the IAM policy needs one more permission for the skip-if-exists check:Lastly, a standalone Harness pipeline to run this on demand (not tied to your build pipeline — this is an admin/backfill job):**What it does, top to bottom:**
+- Logs into Nexus and ECR once at the start
+- Reads your CSV/list, one image per row
+- For each: skips it if it's already in ECR (toggle off with `SKIP_IF_EXISTS=false`), pulls from Nexus with retries, creates the ECR repo if needed, tags, pushes with retries, and optionally cleans up the local image to save disk
+- Writes a `RESULTS_FILE` CSV logging success/skip/fail per image, so you have an audit trail for a big run
+- Ends with a summary + non-zero exit if anything failed, without stopping the whole batch partway through
+
+**Before running it for real**, I'd set `DRY_RUN=true` first — it'll walk the whole list, tell you exactly what it would pull/push/skip, and write that to the results file, without touching Docker or ECR.
+
+**Setup on top of what you already have:**
+- Reuse your existing Nexus creds if they're already a Harness secret — otherwise add `nexus_ci_username` / `nexus_ci_password`
+- Re-apply the IAM policy (it picked up one new permission, `ecr:DescribeImages`, for the skip check)
+- Drop your actual report at whatever path you set `INPUT_FILE` to
+
+Since your report format might not actually be CSV (could be JSON, could be some export from your dependency scanner) — if it's not close to what's in the example file, tell me what it looks like and I'll adjust the parsing rather than you reshaping the report to fit the script.

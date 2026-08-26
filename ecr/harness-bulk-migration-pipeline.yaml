@@ -1,0 +1,47 @@
+# Standalone pipeline - not wired to any auto-trigger. Run manually from the
+# Harness UI (Run Pipeline) when you actually want to backfill ECR.
+#
+# Check bulk-migrate-nexus-to-ecr.sh and your CSV report into this repo, e.g.
+# at ci/scripts/bulk-migrate-nexus-to-ecr.sh and migrations/report.csv,
+# and update the paths below to match.
+
+pipeline:
+  name: Bulk Migrate Nexus to ECR
+  identifier: bulk_migrate_nexus_to_ecr
+  projectIdentifier: <YOUR_PROJECT>
+  orgIdentifier: <YOUR_ORG>
+  stages:
+    - stage:
+        name: Migrate
+        identifier: migrate
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Bulk push to ECR
+                  identifier: bulk_push_to_ecr
+                  spec:
+                    connectorRef: <YOUR_DOCKERHUB_OR_PUBLIC_IMAGE_CONNECTOR>
+                    image: docker:24-cli
+                    shell: Sh
+                    command: |
+                      sh ci/scripts/bulk-migrate-nexus-to-ecr.sh
+                    envVariables:
+                      NEXUS_REGISTRY: "nexus.company.com"
+                      NEXUS_USERNAME: <+secrets.getValue("nexus_ci_username")>
+                      NEXUS_PASSWORD: <+secrets.getValue("nexus_ci_password")>
+                      AWS_ACCESS_KEY_ID: <+secrets.getValue("aws_ecr_nonprod_access_key")>
+                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_ecr_nonprod_secret_key")>
+                      AWS_REGION: "us-east-1"
+                      AWS_ACCOUNT_ID: "111111111111"
+                      INPUT_FILE: "migrations/report.csv"
+                      DRY_RUN: "false"
