@@ -1,0 +1,42 @@
+{
+  "space": {
+    "key": "{{space_key}}",
+    "name": "{{team_name}} team space",
+    "description": "Standardized Confluence space for {{team_name}}, generated from the program's greenfield template."
+  },
+  "variables": {
+    "space_key": {"prompt": "Space key (short, unique, e.g. TEAMC)", "required": true},
+    "team_name": {"prompt": "Team name", "required": true},
+    "poc_name": {"prompt": "Primary point of contact", "required": true},
+    "poc_email": {"prompt": "POC email", "required": true},
+    "repo_url": {"prompt": "Source repo URL", "required": false, "default": "TBD"}
+  },
+  "pages": [
+    {
+      "title": "{{team_name}} home",
+      "template": "templates/home.html",
+      "children": [
+        {
+          "title": "Onboarding",
+          "template": "templates/onboarding.html",
+          "children": [
+            {"title": "New hire checklist", "template": "templates/onboarding_checklist.html"}
+          ]
+        },
+        {
+          "title": "Runbooks",
+          "template": "templates/runbooks.html",
+          "children": [
+            {"title": "Deploy", "template": "templates/runbook_deploy.html"},
+            {"title": "Rollback", "template": "templates/runbook_rollback.html"},
+            {"title": "Incident response", "template": "templates/runbook_incident.html"}
+          ]
+        },
+        {
+          "title": "Architecture",
+          "template": "templates/architecture.html"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+Good additions — both make sense as the next layer on top of the export script. Let me build the comparison tool first, then the scaffolding tool with variable-driven templates for the "customize at creation time" part.Comparison script works correctly. Now the scaffolding tool with the manifest, templates, and variable substitution.Now the example manifest and templates so this is testable end-to-end, not just theoretical:Now let's test the full flow end-to-end with dry-run, including a deliberate typo to confirm the unresolved-placeholder check catches it:Full plan renders correctly with variables substituted into titles. Now confirm the missing-required-variable guard and the unresolved-placeholder warning both work:Everything works — dry-run planning, required-variable enforcement, typo detection, and interactive prompting (using the default `TBD` for the optional repo URL when left blank). Now packaging it all up for delivery.Both are tested end to end (dry-run output, missing-variable guard, typo detection, and interactive prompting all verified above). Quick rundown of how they work:
+
+**Comparison** (`confluence_compare.py`) — matches pages by their full path (e.g. `home / runbooks / deploy`), not by page ID, since IDs are meaningless across spaces. Two modes:
+- `--a X_tree.json --b Y_tree.json` for a straight head-to-head
+- `--reference GREENFIELD_tree.json --target TEAMA.json --target TEAMB.json ...` for auditing several spaces against your standard at once — prints a per-space conformance % and a summary table. It takes the exact JSON that `confluence_export.py` already produces, so the two scripts chain directly.
+
+**One-click creation** (`confluence_scaffold.py`) — this is the "customizability at inception" piece. A manifest (`greenfield_example.zip` has a full working one) declares:
+- the page tree itself, each node pointing at a template file
+- a `variables` block — the things that differ per team (team name, POC, repo URL, space key, whatever your program needs), each with a prompt, and optionally a default or required flag
+
+Run it, and it asks for those variables once (or take them via `--var key=value` / `--vars-file`, e.g. for scripting/CI), then stamps them into every page's title and body via `{{variable}}` placeholders as it walks the manifest tree and creates each page under the right parent. So "Deploy runbook" for Team C automatically gets Team C's repo link and Team C's on-call contact baked in — you're not hand-editing 8 pages after the fact.
+
+Two safety features worth knowing about since this one writes data:
+- `--dry-run` prints the exact plan (rendered titles, which template feeds each page) without touching the API — always worth running first
+- if a template references a variable that isn't declared in the manifest (a typo, usually), it's flagged as an unresolved placeholder rather than silently publishing `{{taem_name}}` onto a real page
+
+Re-running it is safe — it checks for an existing page by title before creating, so fixing one template and re-running doesn't duplicate the rest of the tree.
+
+One thing to keep in mind: creating spaces via the API generally needs Confluence Administrator rights, which is worth pairing with an approval step rather than making fully self-service in a federal environment. If you want, a natural next step is wrapping this in a lightweight request form (even something as simple as a ServiceNow/Jira intake that lands the variables into a `vars.json` and triggers the script) so non-technical requesters don't need the CLI at all.
