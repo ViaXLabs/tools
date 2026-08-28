@@ -1,0 +1,89 @@
+Good news: if you're already streaming AWS RDS metrics into New Relic via Kinesis Data Firehose (CloudWatch Metric Streams), you almost certainly already have everything you need — you just haven't queried it yet. Let me walk you through this.
+
+## Step 1: Confirm what RDS data you actually have
+
+Run this in Query Builder first to see what's landing:
+
+```sql
+FROM Metric SELECT uniques(metricName) WHERE metricName LIKE 'aws.rds%' SINCE 1 day ago
+```
+
+With CloudWatch Metric Streams, RDS metrics show up as `Metric` data type, typically named like `aws.rds.CPUUtilization`, `aws.rds.FreeStorageSpace`, etc., with a dimension identifying the instance — usually `aws.rds.dbInstanceIdentifier` (sometimes just `dbInstanceIdentifier` depending on your stream config). Confirm the exact dimension name with:
+
+```sql
+FROM Metric SELECT keyset() WHERE metricName = 'aws.rds.CPUUtilization' SINCE 1 hour ago
+```
+
+Look for the field that holds the instance name — you'll facet on that everywhere below.
+
+## Step 2: The metrics that answer "IO issues and getting full"
+
+Here's the core set that maps directly to your customer's ask:
+
+**Storage / "getting full":**
+- `aws.rds.FreeStorageSpace` — bytes remaining, trending down = filling up
+- `aws.rds.BurstBalance` — only relevant for gp2 storage; low balance = throttled IO coming
+
+**IO issues:**
+- `aws.rds.ReadIOPS` / `aws.rds.WriteIOPS`
+- `aws.rds.ReadLatency` / `aws.rds.WriteLatency` (seconds — watch for spikes)
+- `aws.rds.DiskQueueDepth` — this is the real "IO is backing up" signal
+- `aws.rds.NetworkReceiveThroughput` / `aws.rds.NetworkTransmitThroughput`
+
+**Supporting context (customers usually want these too):**
+- `aws.rds.CPUUtilization`
+- `aws.rds.FreeableMemory`
+- `aws.rds.SwapUsage` (swapping = memory pressure, often correlates with IO problems)
+- `aws.rds.DatabaseConnections`
+- `aws.rds.ReplicaLag` (if they have read replicas)
+
+## Step 3: Dashboard structure
+
+I'd build this as one dashboard, 4 pages:
+
+**Page 1 — Fleet Overview**
+- Billboard: count of distinct DB instances
+- Table faceted by instance: latest CPU%, FreeStorageSpace, DiskQueueDepth, DatabaseConnections — sorted worst-first so problem instances float to the top
+- This is the "at a glance, who's on fire" page
+
+**Page 2 — Storage / Capacity**
+```sql
+FROM Metric SELECT latest(aws.rds.FreeStorageSpace)/1e9 AS 'Free GB'
+FACET aws.rds.dbInstanceIdentifier SINCE 10 minutes ago
+```
+```sql
+FROM Metric SELECT average(aws.rds.FreeStorageSpace)/1e9
+TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 7 days ago
+```
+That second one is the money query — a declining slope over 7 days tells the customer exactly when a DB will hit zero. You can even add a simple trend/linear-projection widget or callout for "days until full" if you want to get fancy later.
+
+**Page 3 — IO Performance**
+```sql
+FROM Metric SELECT average(aws.rds.ReadIOPS), average(aws.rds.WriteIOPS)
+TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago
+```
+```sql
+FROM Metric SELECT average(aws.rds.DiskQueueDepth)
+TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago
+```
+```sql
+FROM Metric SELECT average(aws.rds.ReadLatency)*1000, average(aws.rds.WriteLatency)*1000
+TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago
+```
+(multiplying latency by 1000 converts seconds to ms — much more readable)
+
+**Page 4 — Health / Resources**
+CPU, FreeableMemory, SwapUsage, DatabaseConnections, ReplicaLag — same TIMESERIES + FACET pattern.
+
+## Step 4: Make it actionable, not just pretty
+
+Two things that will make this land well with the customer:
+
+1. **Add threshold alerts, not just dashboard tiles.** A dashboard nobody watches doesn't prevent an outage. At minimum, set NRQL alert conditions on:
+   - `FreeStorageSpace` below some GB threshold
+   - `DiskQueueDepth` above a sustained threshold
+   - `BurstBalance` below ~20% (early warning before IO gets throttled)
+
+2. **Sort/rank by "worst," not alphabetically.** Customers with dozens of RDS instances don't want to scan a wall of charts — they want the 3 that are actually in trouble surfaced first. That's why I put a sorted table on page 1.
+
+Want me to actually generate the dashboard as a New Relic dashboard JSON file you can import directly (Dashboards > Import dashboard), rather than building each widget by hand in the UI? If so, tell me the exact dimension name you found in Step 1 (e.g., `aws.rds.dbInstanceIdentifier` vs something else) and I'll wire it in correctly.
