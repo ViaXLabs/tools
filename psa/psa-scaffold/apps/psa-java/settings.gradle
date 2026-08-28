@@ -1,0 +1,6 @@
+// APP: apps/psa-java/settings.gradle
+// This name ("psa-java") determines the build/install/<name>/ directory
+// gradle installDist produces -- Dockerfile's COPY --from=build and
+// ENTRYPOINT both hardcode "psa-java" to match. If you ever rename this
+// project, update the Dockerfile too.
+rootProject.name = 'psa-java'

@@ -1,0 +1,97 @@
+# CD only -- see psa-java-ecs.yaml for the full explanation. Same
+# pattern, python app, EKS target.
+pipeline:
+  name: psa-python-eks
+  identifier: psa_python_eks
+  projectIdentifier: <+input>
+  orgIdentifier: <+input>
+  variables:
+    - name: environment
+      type: String
+      value: <+input>
+    - name: nexus_registry
+      type: String
+      value: <+input>
+    - name: image_tag
+      type: String
+      value: <+input>
+      description: The tag psa-python-ci just pushed to Nexus for this app
+
+  stages:
+    - stage:
+        name: Foundation
+        identifier: foundation
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Apply foundation
+                  identifier: apply_foundation
+                  template:
+                    templateRef: terraform_apply
+                    versionLabel: v1
+                    templateInputs:
+                      spec:
+                        spec:
+                          configuration:
+                            spec:
+                              workspace: psa-<+pipeline.variables.environment>-foundation
+                              configFiles:
+                                store:
+                                  spec:
+                                    folderPath: terraform/live/<+pipeline.variables.environment>/foundation
+                              varFiles:
+                                - varFile:
+                                    spec:
+                                      content: ""
+                          provisionerIdentifier: psa_<+pipeline.variables.environment>_foundation
+
+    - stage:
+        name: EKS infra
+        identifier: eks_infra
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Apply EKS
+                  identifier: apply_eks
+                  template:
+                    templateRef: terraform_apply
+                    versionLabel: v1
+                    templateInputs:
+                      spec:
+                        spec:
+                          configuration:
+                            spec:
+                              workspace: psa-<+pipeline.variables.environment>-eks
+                              configFiles:
+                                store:
+                                  spec:
+                                    folderPath: terraform/live/<+pipeline.variables.environment>/eks
+                              varFiles:
+                                - varFile:
+                                    spec:
+                                      content: |
+                                        python_image_uri = "<+pipeline.variables.nexus_registry>/psa-<+pipeline.variables.environment>-python:<+pipeline.variables.image_tag>"
+                          provisionerIdentifier: psa_<+pipeline.variables.environment>_eks
+
+    - stage:
+        name: Verify
+        identifier: verify
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Deploy and verify
+                  identifier: deploy_and_verify
+                  template:
+                    templateRef: deploy_and_verify
+                    versionLabel: v1
+                    templateInputs:
+                      spec:
+                        envVariables:
+                          HEALTH_URL: <+input>
+                          NEW_RELIC_APP_NAME: psa-python-<+pipeline.variables.environment>

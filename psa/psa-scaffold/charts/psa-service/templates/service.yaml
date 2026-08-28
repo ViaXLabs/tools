@@ -1,0 +1,15 @@
+# CHART: charts/psa-service (templates/service.yaml)
+# ClusterIP by default (no "type" set). The ingress in ingress.yaml is
+# what actually exposes this outside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "psa.fullname" . }}
+  labels:
+    {{- include "psa.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "psa.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.containerPort }}

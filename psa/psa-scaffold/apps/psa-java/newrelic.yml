@@ -1,0 +1,18 @@
+# The Java agent reads NEW_RELIC_LICENSE_KEY, NEW_RELIC_APP_NAME, and
+# NEW_RELIC_LOG_FILE_PATH directly from the environment, so this file only
+# needs to exist for settings those env vars don't cover. Set here, not
+# per-environment, since it ships inside the image and is the same for
+# dev/test/stage/prod.
+common: &default_settings
+  agent_enabled: true
+  distributed_tracing:
+    enabled: true
+
+production:
+  <<: *default_settings
+
+development:
+  <<: *default_settings
+
+test:
+  <<: *default_settings

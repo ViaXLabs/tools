@@ -1,0 +1,2 @@
+# No third-party dependencies yet -- app.py only uses the standard library.
+# Add real dependencies here as the app grows.

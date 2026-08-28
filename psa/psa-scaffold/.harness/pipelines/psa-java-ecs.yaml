@@ -1,0 +1,103 @@
+# CD only -- no build stage here, that's psa-java-ci.yaml. This pipeline
+# takes image_tag as an input (set by a trigger off psa-java-ci's success,
+# or supplied manually) and deploys exactly that tag, pulled from Nexus.
+# ECR is never referenced here.
+pipeline:
+  name: psa-java-ecs
+  identifier: psa_java_ecs
+  projectIdentifier: <+input>
+  orgIdentifier: <+input>
+  variables:
+    - name: environment
+      type: String
+      value: <+input>
+    - name: nexus_registry
+      type: String
+      value: <+input>
+    - name: image_tag
+      type: String
+      value: <+input>
+      description: The tag psa-java-ci just pushed to Nexus for this app
+
+  stages:
+    - stage:
+        name: Foundation
+        identifier: foundation
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Apply foundation
+                  identifier: apply_foundation
+                  template:
+                    templateRef: terraform_apply
+                    versionLabel: v1
+                    templateInputs:
+                      spec:
+                        spec:
+                          configuration:
+                            spec:
+                              workspace: psa-<+pipeline.variables.environment>-foundation
+                              configFiles:
+                                store:
+                                  spec:
+                                    folderPath: terraform/live/<+pipeline.variables.environment>/foundation
+                              varFiles:
+                                - varFile:
+                                    spec:
+                                      content: "" # nothing to override here -- foundation doesn't take an image tag
+                          provisionerIdentifier: psa_<+pipeline.variables.environment>_foundation
+
+    - stage:
+        name: ECS infra
+        identifier: ecs_infra
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Apply ECS
+                  identifier: apply_ecs
+                  template:
+                    templateRef: terraform_apply
+                    versionLabel: v1
+                    templateInputs:
+                      spec:
+                        spec:
+                          configuration:
+                            spec:
+                              workspace: psa-<+pipeline.variables.environment>-ecs
+                              configFiles:
+                                store:
+                                  spec:
+                                    folderPath: terraform/live/<+pipeline.variables.environment>/ecs
+                              varFiles:
+                                - varFile:
+                                    spec:
+                                      content: |
+                                        java_image_uri = "<+pipeline.variables.nexus_registry>/psa-<+pipeline.variables.environment>-java:<+pipeline.variables.image_tag>"
+                          provisionerIdentifier: psa_<+pipeline.variables.environment>_ecs
+
+    - stage:
+        name: Verify
+        identifier: verify
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Deploy and verify
+                  identifier: deploy_and_verify
+                  template:
+                    templateRef: deploy_and_verify
+                    versionLabel: v1
+                    templateInputs:
+                      spec:
+                        envVariables:
+                          HEALTH_URL: <+input>
+                          NEW_RELIC_APP_NAME: psa-java-<+pipeline.variables.environment>
+
+  # Before stage/prod runs, add a HarnessApproval step at the top of the
+  # "ECS infra" stage (or as its own stage between Foundation and ECS infra)
+  # so a plan gets a human sign-off before apply runs.

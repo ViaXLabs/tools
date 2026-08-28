@@ -1,0 +1,27 @@
+# Reusable Harness step template. One template covers every language --
+# the pipeline that calls it supplies the repo path, Dockerfile, and
+# build context, so adding Node or Nginx later needs zero changes here.
+#
+# Uses the generic Docker registry step (not an ECR-specific one) since
+# images are pushed to Nexus, not ECR -- this needs a Docker connector
+# with Nexus credentials configured in Harness, not an AWS connector.
+#
+# NOTE: exact step/field names should be checked against your Harness
+# module (CI vs CD) and version before use -- this is a structural
+# starting point, not a validated export from a live account.
+template:
+  name: build-and-push-image
+  identifier: build_and_push_image
+  versionLabel: v1
+  type: Step
+  spec:
+    type: BuildAndPushDockerRegistry
+    timeout: 15m
+    spec:
+      connectorRef: <+input>
+      repo: <+input>
+      tags:
+        - <+input>
+      dockerfile: <+input>
+      context: <+input>
+      caching: true

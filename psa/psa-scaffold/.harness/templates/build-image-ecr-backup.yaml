@@ -1,0 +1,31 @@
+# Backup-only push. The CI pipelines call this alongside
+# build-and-push-image (Nexus) so a copy of every image also lands in
+# ECR -- but no CD pipeline ever pulls from ECR. This exists purely so a
+# copy survives if Nexus is ever unavailable.
+#
+# Note this rebuilds the image a second time (Harness's native registry
+# steps couple build+push together, so pushing the same build to two
+# registries natively means building twice). If build time ever becomes
+# a real concern, the alternative is a single Run step that does
+# `docker build` once and `docker push`s to both registries -- but that
+# trades the native step types' automatic connector-based auth for
+# hand-rolled docker login scripting. Starting with the simpler,
+# slightly slower version here.
+template:
+  name: build-and-push-ecr-backup
+  identifier: build_and_push_ecr_backup
+  versionLabel: v1
+  type: Step
+  spec:
+    type: BuildAndPushECR
+    timeout: 15m
+    spec:
+      connectorRef: <+input>
+      region: <+input>
+      account: <+input>
+      imageName: <+input>
+      tags:
+        - <+input>
+      dockerfile: <+input>
+      context: <+input>
+      caching: true

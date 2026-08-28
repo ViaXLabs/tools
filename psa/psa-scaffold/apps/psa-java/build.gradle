@@ -1,0 +1,30 @@
+// APP: apps/psa-java/build.gradle
+// `gradle installDist` (run by the Dockerfile) produces build/install/psa-java/
+// with a start script that reads $JAVA_OPTS at runtime -- that's how the
+// New Relic -javaagent flag gets attached without any code here knowing
+// about New Relic at all. See settings.gradle for the project name that
+// determines that install directory's name.
+
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+application {
+    mainClass = 'com.psa.java.Application'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+// If you later add custom New Relic instrumentation (custom events, spans),
+// add the API as a compile dependency here:
+// dependencies {
+//     implementation 'com.newrelic.agent.java:newrelic-api:8.+'
+// }

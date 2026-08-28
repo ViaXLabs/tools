@@ -1,0 +1,13 @@
+# CHART: charts/psa-service/Chart.yaml
+# Metadata only -- the description field below explains the chart's role.
+apiVersion: v2
+name: psa-service
+description: >-
+  Shared Helm chart for PSA workloads on EKS. One chart, reused by every
+  language variant (psa-java, psa-python, and whatever comes next) --
+  each app supplies its own image and values, the chart itself never
+  changes per language. This is the Kubernetes-side equivalent of
+  terraform/modules/ecs-service on the ECS side.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

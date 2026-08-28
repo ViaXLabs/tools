@@ -1,0 +1,33 @@
+# Reusable Harness step template. The same template applies foundation,
+# ecs, or eks -- only templateInputs.workspace, folderPath, and (for the
+# ecs/eks target stages) varFiles change per call site. varFiles is what
+# lets a CD pipeline hand Terraform the image tag that CI just built,
+# overriding whatever's baked into the checked-in .tfvars.
+template:
+  name: terraform-apply
+  identifier: terraform_apply
+  versionLabel: v1
+  type: Step
+  spec:
+    type: TerraformApply
+    timeout: 20m
+    spec:
+      configuration:
+        type: Inline
+        spec:
+          workspace: <+input>
+          configFiles:
+            store:
+              type: Github
+              spec:
+                connectorRef: <+input>
+                gitFetchType: Branch
+                branch: main
+                folderPath: <+input>
+          varFiles:
+            - varFile:
+                identifier: runtime_overrides
+                type: Inline
+                spec:
+                  content: <+input>
+      provisionerIdentifier: <+input>

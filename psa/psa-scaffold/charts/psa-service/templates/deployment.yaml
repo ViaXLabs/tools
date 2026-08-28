@@ -1,0 +1,42 @@
+# CHART: charts/psa-service (templates/deployment.yaml)
+# Shared across every PSA app -- {{ .Release.Name }} (via the psa.fullname
+# helper) is what makes this "psa-java" or "psa-python" at install time,
+# set by terraform/modules/eks-workload's helm_release "name" argument.
+# All values referenced below come from Terraform's yamlencode() call in
+# that module, not from this chart's own values.yaml defaults.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "psa.fullname" . }}
+  labels:
+    {{- include "psa.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "psa.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "psa.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "psa.fullname" . }}
+      {{- with .Values.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.containerPort }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

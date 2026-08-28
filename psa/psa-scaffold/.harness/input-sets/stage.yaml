@@ -1,0 +1,21 @@
+# Covers environment + nexus_registry, which every psa-* pipeline (CI and
+# CD alike) takes -- swap the pipeline identifier per pipeline, or
+# duplicate this file once per pipeline if your Harness project requires
+# input sets to be pipeline-specific. CD pipelines (psa-*-ecs/eks) take a
+# third variable, image_tag, that deliberately isn't set here -- it's
+# supplied per-run, either manually or by a trigger off the matching CI
+# pipeline's success.
+# Environments beyond this point (stage, prod) are where you'd add a
+# HarnessApproval step in the pipeline before the terraform-apply steps run.
+inputSet:
+  name: stage
+  identifier: stage
+  pipeline:
+    identifier: psa_java_ecs
+    variables:
+      - name: environment
+        type: String
+        value: stage
+      - name: nexus_registry
+        type: String
+        value: nexus.REPLACE_ME.internal:8082/repository/psa-docker

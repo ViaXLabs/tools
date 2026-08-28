@@ -1,0 +1,22 @@
+# Reusable Harness step template. Confirms the service responds and reminds
+# whoever's watching the pipeline to check the app shows up in New Relic.
+# Swap the curl check for a real New Relic API query once you have an
+# API key stored as a Harness secret, if you want this fully automated.
+template:
+  name: deploy-and-verify
+  identifier: deploy_and_verify
+  versionLabel: v1
+  type: Step
+  spec:
+    type: Run
+    timeout: 10m
+    spec:
+      shell: Bash
+      envVariables:
+        HEALTH_URL: <+input>
+        NEW_RELIC_APP_NAME: <+input>
+      command: |
+        set -e
+        echo "Checking $HEALTH_URL"
+        curl -sf "$HEALTH_URL"
+        echo "Confirm $NEW_RELIC_APP_NAME is reporting in New Relic APM"

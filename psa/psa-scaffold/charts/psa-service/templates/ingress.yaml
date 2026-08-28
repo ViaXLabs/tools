@@ -1,0 +1,26 @@
+{{- if .Values.ingress.enabled }}
+# CHART: charts/psa-service (templates/ingress.yaml)
+# ALB ingress class by default (values.yaml: ingress.className). Host
+# comes from Terraform (java_ingress_host / python_ingress_host in
+# terraform/live/<env>/eks/terraform.tfvars).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "psa.fullname" . }}
+  labels:
+    {{- include "psa.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className }}
+spec:
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "psa.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
