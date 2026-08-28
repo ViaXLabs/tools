@@ -1,0 +1,345 @@
+{
+  "name": "AWS Database Fleet Health (RDS / Aurora / Redshift)",
+  "description": "Fleet-wide view of RDS, Aurora, and Redshift storage, IO, and health metrics streamed via CloudWatch Metric Streams. Replace YOUR_ACCOUNT_ID before import. Verify dimension names against your account using the coverage-check query pack before relying on FACET results.",
+  "permissions": "PUBLIC_READ_WRITE",
+  "pages": [
+    {
+      "name": "Fleet Overview",
+      "description": "At-a-glance worst-first view across all AWS database services.",
+      "widgets": [
+        {
+          "title": "RDS Instances Reporting",
+          "layout": { "column": 1, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT uniqueCount(aws.rds.dbInstanceIdentifier) WHERE metricName = 'aws.rds.CPUUtilization' SINCE 10 minutes ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Aurora Clusters Reporting",
+          "layout": { "column": 4, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT uniqueCount(aws.rds.dbClusterIdentifier) WHERE metricName = 'aws.rds.VolumeBytesUsed' SINCE 10 minutes ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Redshift Clusters Reporting",
+          "layout": { "column": 7, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT uniqueCount(aws.redshift.clusterIdentifier) WHERE metricName = 'aws.redshift.CPUUtilization' SINCE 10 minutes ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "RDS / Aurora -- Worst First (CPU, Free Storage, Disk Queue, Connections)",
+          "layout": { "column": 10, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT latest(aws.rds.FreeStorageSpace)/1e9 AS 'Free GB' WHERE metricName = 'aws.rds.FreeStorageSpace' FACET aws.rds.dbInstanceIdentifier SINCE 10 minutes ago LIMIT 1"
+              }
+            ]
+          }
+        },
+        {
+          "title": "RDS + Aurora Instances -- Sorted Worst First",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 4 },
+          "visualization": { "id": "viz.table" },
+          "rawConfiguration": {
+            "facet": { "showOtherSeries": false },
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT latest(aws.rds.CPUUtilization) AS 'CPU %', latest(aws.rds.FreeStorageSpace)/1e9 AS 'Free Storage GB', latest(aws.rds.DiskQueueDepth) AS 'Disk Queue Depth', latest(aws.rds.DatabaseConnections) AS 'Connections' FACET aws.rds.dbInstanceIdentifier SINCE 10 minutes ago LIMIT 100"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Redshift Clusters -- Sorted Worst First",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 4 },
+          "visualization": { "id": "viz.table" },
+          "rawConfiguration": {
+            "facet": { "showOtherSeries": false },
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT latest(aws.redshift.CPUUtilization) AS 'CPU %', latest(aws.redshift.PercentageDiskSpaceUsed) AS 'Disk Used %', latest(aws.redshift.WLMQueueLength) AS 'WLM Queue Length', latest(aws.redshift.DatabaseConnections) AS 'Connections' FACET aws.redshift.clusterIdentifier SINCE 10 minutes ago LIMIT 100"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "RDS",
+      "description": "Storage, IO, and health for standard RDS instances (MySQL, Postgres, MariaDB, SQL Server, Oracle).",
+      "widgets": [
+        {
+          "title": "Free Storage Space Over Time (GB)",
+          "layout": { "column": 1, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.FreeStorageSpace)/1e9 AS 'Free GB' TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Burst Balance (gp2 storage -- early IO throttle warning)",
+          "layout": { "column": 7, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.BurstBalance) AS '% Burst Balance' TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 3 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Read / Write IOPS",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.ReadIOPS) AS 'Read IOPS', average(aws.rds.WriteIOPS) AS 'Write IOPS' TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Disk Queue Depth",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.DiskQueueDepth) TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Read / Write Latency (ms)",
+          "layout": { "column": 1, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.ReadLatency)*1000 AS 'Read ms', average(aws.rds.WriteLatency)*1000 AS 'Write ms' TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "CPU / Freeable Memory / Swap",
+          "layout": { "column": 7, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.CPUUtilization) AS 'CPU %', average(aws.rds.FreeableMemory)/1e9 AS 'Freeable Mem GB', average(aws.rds.SwapUsage)/1e6 AS 'Swap MB' TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Database Connections",
+          "layout": { "column": 1, "row": 10, "width": 12, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.DatabaseConnections) TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Aurora",
+      "description": "Aurora-specific storage and replication metrics (MySQL-compatible and Postgres-compatible).",
+      "widgets": [
+        {
+          "title": "Volume Bytes Used Over Time (GB) -- Aurora's real 'getting full' metric",
+          "layout": { "column": 1, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.VolumeBytesUsed)/1e9 AS 'Volume GB' TIMESERIES FACET aws.rds.dbClusterIdentifier SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Aurora Replica Lag (ms)",
+          "layout": { "column": 7, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.AuroraReplicaLag) TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Volume Read / Write IOPs (billing + performance signal)",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.VolumeReadIOPs) AS 'Read IOPs', average(aws.rds.VolumeWriteIOPs) AS 'Write IOPs' TIMESERIES FACET aws.rds.dbClusterIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Serverless Capacity Units (Aurora Serverless v2 only)",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.ServerlessDatabaseCapacity) TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Engine Uptime (drops indicate restarts)",
+          "layout": { "column": 1, "row": 7, "width": 12, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.rds.EngineUptime) TIMESERIES FACET aws.rds.dbInstanceIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Redshift",
+      "description": "Redshift cluster health, disk usage, and workload management queue metrics.",
+      "widgets": [
+        {
+          "title": "Percentage Disk Space Used -- Redshift's 'getting full' metric",
+          "layout": { "column": 1, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.redshift.PercentageDiskSpaceUsed) TIMESERIES FACET aws.redshift.clusterIdentifier SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Cluster Health Status",
+          "layout": { "column": 7, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT latest(aws.redshift.HealthStatus) TIMESERIES FACET aws.redshift.clusterIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "WLM Queue Length / Duration -- classic Redshift trouble signal",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.redshift.WLMQueueLength) AS 'Queue Length', average(aws.redshift.WLMQueryDuration)/1000 AS 'Query Duration (s)' TIMESERIES FACET aws.redshift.clusterIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Read / Write IOPS + Latency",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.redshift.ReadIOPS) AS 'Read IOPS', average(aws.redshift.WriteIOPS) AS 'Write IOPS' TIMESERIES FACET aws.redshift.clusterIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "CPU Utilization",
+          "layout": { "column": 1, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.redshift.CPUUtilization) TIMESERIES FACET aws.redshift.clusterIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Database Connections + Concurrency Scaling Activity",
+          "layout": { "column": 7, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": "YOUR_ACCOUNT_ID",
+                "query": "FROM Metric SELECT average(aws.redshift.DatabaseConnections) AS 'Connections', average(aws.redshift.ConcurrencyScalingActiveClusters) AS 'Concurrency Scaling Clusters' TIMESERIES FACET aws.redshift.clusterIdentifier SINCE 1 day ago"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
