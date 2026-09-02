@@ -1,0 +1,58 @@
+Good news — this is actually simpler than DynamoDB once you know where to look, since you're on the newer native S3 locking (`use_lockfile = true`) rather than the old DynamoDB-based mechanism.
+
+## How it works (different mental model than DynamoDB)
+
+With DynamoDB, the lock was a **row** in a table — easy to eyeball, easy to delete. With native S3 locking, Terraform creates a `.tflock` file alongside your state file using S3's conditional-write feature (the `If-None-Match` header). If that lock file already exists, S3 rejects any concurrent write attempt, which is what enforces the lock. So instead of a DynamoDB row, you're looking for a literal object sitting next to your `.tfstate` file in the bucket — typically named something like `terraform.tfstate.tflock` or `<your-key>.tflock`.
+
+## Step 1: Find the stale lock file
+
+```bash
+aws s3 ls s3://your-bucket-name/path/to/ --recursive | grep tflock
+```
+
+You'll see something like:
+
+```
+prod/infrastructure/terraform.tfstate.tflock
+```
+
+That file is your lock — the S3 equivalent of the mismatched DynamoDB row you used to spot and delete.
+
+## Step 2: The right way — don't delete it manually if you can avoid it
+
+Terraform actually gives you a built-in command for this, and it's the preferred path because it validates the lock ID before removing it (manually deleting the S3 object works too, but skips that safety check):
+
+```bash
+terraform force-unlock LOCK_ID
+```
+
+To get the `LOCK_ID`, just run any Terraform command (like `terraform plan`) while the stale lock is in place — Terraform will fail and print the Lock ID in its error message, something like:
+
+```
+Error: Error acquiring the state lock
+
+Lock Info:
+  ID:        7a2f9c31-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  Path:      prod/infrastructure/terraform.tfstate
+  Operation: OperationTypeApply
+  Who:       ci-runner@harness
+  Created:   2026-08-30 14:22:01 UTC
+```
+
+Copy that `ID` value into the force-unlock command.
+
+## Step 3 (only if force-unlock isn't available or fails): delete the object directly
+
+If you're in a pinch and just need it gone:
+
+```bash
+aws s3 rm s3://your-bucket-name/path/to/terraform.tfstate.tflock
+```
+
+This is the direct equivalent of deleting the DynamoDB row — just an S3 object instead of a table row.
+
+## One thing worth double-checking in your Harness pipeline
+
+Since you're on native S3 locking already (no DynamoDB table involved), this is the newer, generally-available approach since Terraform 1.11, and it writes that `.tflock` object using S3 conditional writes instead of a separate DynamoDB table — so if your Harness template still has any leftover `dynamodb_table` reference in the backend block from before you migrated, it's dead weight and worth removing to avoid confusion later, since the DynamoDB-based approach is now deprecated but not removed, so both can coexist without erroring, which occasionally confuses people who think DynamoDB is still doing something.
+
+If you want, paste your `backend "s3" {}` block from the Harness template and I'll confirm whether you're fully on native locking or still straddling both.
