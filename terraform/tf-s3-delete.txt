@@ -1,0 +1,65 @@
+Totally doable — deleting the object directly is the same idea as deleting the DynamoDB row, and since force-unlock isn't accessible to you outside the pipeline, this is actually your best option right now.
+
+## How it works
+
+Terraform's native S3 locking doesn't use a separate system at all — it just writes one extra file into the same bucket, right next to your state file. When that file exists, S3's conditional-write feature (`If-None-Match`) blocks anyone else from writing a new one, which is what "locks" it. Delete that one file, and the lock is gone — there's no other record, no metadata elsewhere, nothing else to clean up. It's genuinely that simple, just a plain object sitting in your bucket.
+
+## Step 1: Find it
+
+Your lock file will be named after your state file with `.tflock` appended, sitting in the same "folder" (prefix) as your `.tfstate`. So if your state key is:
+
+```
+prod/infrastructure/terraform.tfstate
+```
+
+your lock file will be:
+
+```
+prod/infrastructure/terraform.tfstate.tflock
+```
+
+Via AWS CLI, to confirm it's there:
+
+```bash
+aws s3 ls s3://your-bucket-name/prod/infrastructure/
+```
+
+You should see both `terraform.tfstate` and `terraform.tfstate.tflock` listed.
+
+## Step 2: Delete it manually
+
+### Option A — AWS CLI (fastest)
+
+```bash
+aws s3 rm s3://your-bucket-name/prod/infrastructure/terraform.tfstate.tflock
+```
+
+That's the entire operation. No confirmation prompt, no dependent resources — it's just a file delete.
+
+### Option B — AWS Console (if you'd rather click than type)
+
+1. Go to S3 → your state bucket
+2. Navigate into the same folder/prefix as your `.tfstate` file
+3. You'll see the `.tflock` file listed alongside it (same name, `.tflock` extension)
+4. Select it → **Delete**
+5. Confirm the delete
+
+That's it — next pipeline run will succeed since there's no lock object blocking the write.
+
+## One important caveat: bucket versioning
+
+If your state bucket has **versioning enabled** (which it should, for state file safety), deleting the object in the console/CLI the normal way just adds a "delete marker" on top — it doesn't `permanently` remove old versions, but functionally it does make the object "not exist" from Terraform's perspective, so the lock clears exactly the way you want. You don't need to do anything extra for that — a normal delete is sufficient to unblock the lock. Just know that if you ever `aws s3 ls` with `--recursive` and don't see it disappear from a version history view, that's expected and not a problem.
+
+## A tiny safety check before you delete (optional but worth 10 seconds)
+
+If you want to be sure you're not deleting an *active* lock (i.e., someone's pipeline run genuinely in progress right now), you can peek at the lock file's contents first — it's just JSON:
+
+```bash
+aws s3 cp s3://your-bucket-name/prod/infrastructure/terraform.tfstate.tflock - | cat
+```
+
+That'll print out the same info you'd have seen in a `force-unlock` error — who created it, when, and what operation. If the `Created` timestamp is old (stuck from a crashed run) or matches a pipeline you know failed, safe to delete. If it's from 30 seconds ago, maybe don't.
+
+## On the script/template idea for later
+
+Once you're ready, a two-line wrapper script (check age of lock → delete if stale, else warn) would remove the manual step entirely and could live as a Harness step or a standalone CLI tool your team runs. Happy to write that whenever you want it — just say the word and I'll build it as an actual script file you can drop into your repo.
