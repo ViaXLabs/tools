@@ -1,0 +1,45 @@
+You've found a genuinely important gotcha, and it's not really a Terraform bug — it's how ECS (and Vault, later) actually handles secrets under the hood. Let me explain the mechanism, because once you see it, the fix is obvious.
+
+## The core thing to understand: secrets are pulled once, at container start — never live
+
+When ECS launches a task, it resolves the `secrets` block (SSM/Secrets Manager references) **at that moment**, injects the value as an environment variable into the container, and then never looks at it again. There's no polling, no hot-reload, no "the container noticed SSM changed." If you update the SSM parameter's value while a task is already running, that running task has no idea anything changed — it's holding the old value in memory forever, until it dies and a new task starts.
+
+This is almost certainly your "bump" symptom: you update the SSM parameter, and... nothing happens. Not because Terraform did something wrong, but because updating the *stored value* and *redeploying the container* are two completely separate events, and nothing in your current setup is connecting them.
+
+## Where Terraform fits into this (and where it doesn't)
+
+Terraform's `aws_ssm_parameter` resource, when you change its `value`, does a clean in-place update in SSM — no issue there. But that update, by itself, **does not trigger ECS to do anything**. Terraform only forces a new ECS deployment if something in the *task definition itself* changes (container image, CPU/memory, the JSON block, etc.). If your task definition references the SSM parameter by its ARN with no version pinned, that ARN string never changes even when the underlying value does — so Terraform sees "no diff" on the task definition and doesn't touch ECS at all.
+
+## The "random key store" problem — a separate, worse issue
+
+If what's happening is that your Terraform is generating a **new SSM parameter path/name** each time (e.g. a name with a random suffix or timestamp baked in) instead of updating the *same* parameter in place, that's a real anti-pattern, and it explains why things go stale in a more confusing way:
+
+- The old task definition still points at the old parameter path — permanently. It'll keep reading the last value forever, since that path's value never changes.
+- Your new parameter, with the new secret, sits there unused unless something updates the task definition to point at it.
+- If the IAM policy on the ECS task execution role is scoped to a specific parameter ARN (common for least-privilege), the new parameter path may not even be covered by that policy — so even if you did wire it up, you'd get an access-denied instead of a stale value.
+
+**Fix:** give the SSM parameter a fixed, stable name/path (e.g. `/myapp/prod/newrelic-license-key`), and only ever update its *value* in place. Never let the path itself change between applies.
+
+## What actually needs to happen for a secret rotation to take effect
+
+Since ECS won't notice on its own, something has to explicitly force a new deployment after the secret value changes. The cleanest way to do this, given you're already running everything through a Harness pipeline: add an explicit step **after** `terraform apply` that forces ECS to redeploy, regardless of whether Terraform itself detected a task-definition diff:
+
+```bash
+aws ecs update-service \
+  --cluster your-cluster \
+  --service your-service \
+  --force-new-deployment
+```
+
+This tells ECS "launch fresh tasks now" — which causes those new tasks to re-resolve the SSM parameter and pick up whatever the current value is. It's simple, explicit, and easy to reason about — much more robust than trying to get Terraform to cleverly detect "the secret changed, therefore redeploy," which tends to become fragile (hash-of-value triggers, `null_resource` tricks, etc.).
+
+## Summary — do this, not that
+
+| Don't | Do |
+|---|---|
+| Let the SSM parameter's name/path change between applies | Keep the parameter path fixed; update only its value |
+| Assume updating SSM auto-updates running containers | Explicitly force a new ECS deployment after any secret change |
+| Pin the ECS task def to a specific SSM parameter *version* unless you have a reason to | Reference the ARN without a version, so new tasks grab latest |
+| Scope IAM to one exact parameter ARN if the name might drift | Scope IAM to a stable path (or a wildcard under a stable prefix) |
+
+Same logic will apply once you move to Vault — Vault-injected env vars are also resolved at container start, not live-reloaded, so you'll want this same "force new deployment after secret rotation" step in the pipeline regardless of which secret store is behind it.
