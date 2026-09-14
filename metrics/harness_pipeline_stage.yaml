@@ -1,0 +1,60 @@
+# Example Harness stage: pulls the pipeline script down (or bakes it into
+# your repo/image), installs deps, and runs it against the non-prod AWS
+# account. Adjust connectorRef / image / secret names to match your setup.
+#
+# Assumes:
+#  - a Harness AWS connector (or the delegate's IAM role) already has
+#    read access to the two source buckets and write access to the
+#    output bucket
+#  - coverage_metrics_pipeline.py lives in your repo (or is pulled in a
+#    prior step) at ./scripts/coverage_metrics_pipeline.py
+
+- stage:
+    name: Monthly Coverage Metrics
+    identifier: monthly_coverage_metrics
+    type: CI
+    spec:
+      cloneCodebase: true
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec: {}
+      execution:
+        steps:
+          - step:
+              name: Install dependencies
+              identifier: install_deps
+              type: Run
+              spec:
+                shell: Sh
+                command: |
+                  pip install --break-system-packages boto3 pandas openpyxl
+
+          - step:
+              name: Run coverage metrics pipeline
+              identifier: run_pipeline
+              type: Run
+              spec:
+                shell: Sh
+                # AWS creds come from the Harness AWS connector bound below,
+                # or from the delegate/runner's instance role if you're
+                # running on an EC2-backed delegate with the role attached.
+                envVariables:
+                  AWS_REGION: us-east-1
+                command: |
+                  python3 scripts/coverage_metrics_pipeline.py
+                connectorRef: <+input>   # your AWS connector identifier
+
+          - step:
+              name: Publish report artifact
+              identifier: publish_artifact
+              type: Run
+              spec:
+                shell: Sh
+                command: |
+                  # Optional: if you'd rather have Harness surface the file
+                  # as a build artifact instead of (or in addition to) the
+                  # script uploading it to S3 itself.
+                  cp coverage-report.xlsx $HARNESS_OUTPUT_DIR/ 2>/dev/null || true
