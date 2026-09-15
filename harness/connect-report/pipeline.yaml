@@ -1,0 +1,187 @@
+# Illustrative Harness NextGen pipeline - adapt identifiers, org/project scope,
+# and delegate selectors to your account before running.
+pipeline:
+  name: deployment-reporting
+  identifier: deployment_reporting
+  projectIdentifier: <+input>
+  orgIdentifier: <+input>
+
+  variables:
+    - {name: githubRepo, type: String, value: <+input>}
+    - {name: awsRegion, type: String, value: <+input>}
+    - {name: clusterType, type: String, value: <+input>}         # ecs or eks
+    - {name: clusterName, type: String, value: <+input>}
+    - {name: argocdServer, type: String, value: <+input>}
+    - {name: argocdAppName, type: String, value: <+input>}
+    - {name: jiraBaseUrl, type: String, value: <+input>}
+    - {name: jiraEmail, type: String, value: <+input>}            # same as jira_reporting connector's username
+    - {name: confluenceBaseUrl, type: String, value: <+input>}
+    - {name: confluenceEmail, type: String, value: <+input>}      # same as confluence_reporting connector's username
+    - {name: confluenceSpaceKey, type: String, value: <+input>}
+    - {name: s3Bucket, type: String, value: <+input>}
+
+  stages:
+    - stage:
+        name: fetch
+        identifier: fetch
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - parallel:
+                  - step:
+                      name: fetch harness
+                      identifier: fetch_harness
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/harness.sh}}
+                        environmentVariables:
+                          - {name: HARNESS_API_KEY, type: String, value: <+secrets.getValue("harness_api_key")>}
+                          - {name: HARNESS_ACCOUNT_ID, type: String, value: <+account.identifier>}
+                          - {name: HARNESS_ORG_ID, type: String, value: <+org.identifier>}
+                          - {name: HARNESS_PROJECT_ID, type: String, value: <+project.identifier>}
+                          - {name: HARNESS_EXECUTION_ID, type: String, value: <+pipeline.executionId>}
+                      timeout: 5m
+
+                  - step:
+                      name: fetch github
+                      identifier: fetch_github
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/github.sh}}
+                        environmentVariables:
+                          - {name: GITHUB_TOKEN, type: String, value: <+secrets.getValue("github_token")>}
+                          - {name: GITHUB_REPO, type: String, value: <+pipeline.variables.githubRepo>}
+                          - {name: COMMIT_SHA, type: String, value: <+codebase.commitSha>}
+                      timeout: 5m
+
+                  - step:
+                      name: fetch aws
+                      identifier: fetch_aws
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/aws.sh}}
+                        environmentVariables:
+                          - {name: AWS_REGION, type: String, value: <+pipeline.variables.awsRegion>}
+                          - {name: CLUSTER_TYPE, type: String, value: <+pipeline.variables.clusterType>}
+                          - {name: CLUSTER_NAME, type: String, value: <+pipeline.variables.clusterName>}
+                      timeout: 5m
+
+                  - step:
+                      name: fetch argocd
+                      identifier: fetch_argocd
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/argocd.sh}}
+                        environmentVariables:
+                          - {name: ARGOCD_SERVER, type: String, value: <+pipeline.variables.argocdServer>}
+                          - {name: ARGOCD_TOKEN, type: String, value: <+secrets.getValue("argocd_token")>}
+                          - {name: ARGOCD_APP_NAME, type: String, value: <+pipeline.variables.argocdAppName>}
+                      timeout: 5m
+
+                  # Uses the same secret as the jira_reporting connector
+                  # (harness/connectors/jira-connector.yaml) - see the
+                  # comment at the top of fetch/jira.sh for why this is a
+                  # script and not a native Jira step.
+                  - step:
+                      name: fetch jira
+                      identifier: fetch_jira
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/jira.sh}}
+                        environmentVariables:
+                          - {name: JIRA_BASE_URL, type: String, value: <+pipeline.variables.jiraBaseUrl>}
+                          - {name: JIRA_EMAIL, type: String, value: <+pipeline.variables.jiraEmail>}
+                          - {name: JIRA_API_TOKEN, type: String, value: <+secrets.getValue("jira_api_token")>}
+                      timeout: 5m
+
+                  # Uses the same secret as the confluence_reporting connector
+                  # (harness/connectors/confluence-connector.yaml).
+                  - step:
+                      name: fetch confluence
+                      identifier: fetch_confluence
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/confluence.sh}}
+                        environmentVariables:
+                          - {name: CONFLUENCE_BASE_URL, type: String, value: <+pipeline.variables.confluenceBaseUrl>}
+                          - {name: CONFLUENCE_EMAIL, type: String, value: <+pipeline.variables.confluenceEmail>}
+                          - {name: CONFLUENCE_API_TOKEN, type: String, value: <+secrets.getValue("confluence_api_token")>}
+                          - {name: CONFLUENCE_SPACE_KEY, type: String, value: <+pipeline.variables.confluenceSpaceKey>}
+                      timeout: 5m
+
+    - stage:
+        name: normalize and store
+        identifier: normalize_and_store
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: normalize
+                  identifier: normalize
+                  type: ShellScript
+                  spec:
+                    shell: Bash
+                    onDelegate: true
+                    source: {type: Inline, spec: {script: python3 normalize.py}}
+                  timeout: 5m
+
+              - step:
+                  name: store to s3
+                  identifier: store_to_s3
+                  type: ShellScript
+                  spec:
+                    shell: Bash
+                    onDelegate: true
+                    source: {type: Inline, spec: {script: python3 store.py}}
+                    environmentVariables:
+                      - {name: S3_BUCKET, type: String, value: <+pipeline.variables.s3Bucket>}
+                  timeout: 5m
+
+    - stage:
+        name: report
+        identifier: report
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: render html report
+                  identifier: render_html_report
+                  type: ShellScript
+                  spec:
+                    shell: Bash
+                    onDelegate: true
+                    source: {type: Inline, spec: {script: python3 report.py}}
+                    environmentVariables:
+                      - {name: S3_BUCKET, type: String, value: <+pipeline.variables.s3Bucket>}
+                  timeout: 5m
+
+              # Always runs - publishing to Confluence isn't optional here.
+              - step:
+                  name: publish to confluence
+                  identifier: publish_confluence
+                  type: ShellScript
+                  spec:
+                    shell: Bash
+                    onDelegate: true
+                    source: {type: Inline, spec: {script: python3 publish_confluence.py}}
+                    environmentVariables:
+                      - {name: CONFLUENCE_BASE_URL, type: String, value: <+pipeline.variables.confluenceBaseUrl>}
+                      - {name: CONFLUENCE_EMAIL, type: String, value: <+pipeline.variables.confluenceEmail>}
+                      - {name: CONFLUENCE_API_TOKEN, type: String, value: <+secrets.getValue("confluence_api_token")>}
+                      - {name: CONFLUENCE_SPACE_KEY, type: String, value: <+pipeline.variables.confluenceSpaceKey>}
+                  timeout: 5m

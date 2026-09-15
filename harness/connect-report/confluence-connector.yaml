@@ -1,0 +1,32 @@
+# Harness Confluence connector.
+#
+# UNVERIFIED FIELD NAMES - flagging this honestly: Confluence connectors
+# showed up in Harness's current docs as able to "read from or publish to
+# Confluence pages," as part of a newer platform release. I could not pull
+# the exact field schema from the docs, so this is modeled on the confirmed
+# Jira connector pattern (type/spec/auth/passwordRef) rather than copied from
+# a verified example.
+#
+# Before relying on this file: create the connector once by hand in the
+# Harness UI (New Connector -> search "Confluence"), then export it as YAML
+# and diff it against this file. Fix fetch/confluence.sh and
+# publish_confluence.py to match whatever field names the UI actually gives
+# you - both scripts only care about the secret identifier below, not this
+# connector's exact shape.
+connector:
+  name: confluence-reporting
+  identifier: confluence_reporting
+  description: "Confluence connector used for deployment reporting - reads runbook/doc pages and publishes the deployment report"
+  orgIdentifier: YOUR_ORG_IDENTIFIER
+  projectIdentifier: YOUR_PROJECT_IDENTIFIER
+  type: Confluence
+  spec:
+    confluenceUrl: https://YOUR_COMPANY.atlassian.net/wiki
+    auth:
+      type: UsernamePassword
+      spec:
+        username: YOUR_CONFLUENCE_LOGIN_EMAIL
+        # Same secret-creation note as the Jira connector - Text Secret,
+        # ideally backed by Vault.
+        passwordRef: confluence_api_token
+    ignoreTestConnection: false

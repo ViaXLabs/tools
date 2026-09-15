@@ -1,0 +1,30 @@
+# Harness Jira connector.
+# This schema is confirmed from Harness's own docs (Connect to Jira).
+#
+# Note on what this connector is actually for: Harness's native Jira steps
+# (Jira Create, Jira Update, Jira Approval) are built for ticketing actions -
+# creating/updating issues, gating a pipeline on an approval. There is no
+# native "search issues" or "get issue" step. So this connector doesn't
+# replace the JQL query in fetch/jira.sh - what it gives you is one tested,
+# auditable credential (validated with Test Connection in the Harness UI)
+# that fetch/jira.sh reuses instead of a separate ad-hoc token.
+#
+# Create this at the project (or org) level in Harness, then reference
+# `identifier` from pipeline.yaml.
+connector:
+  name: jira-reporting
+  identifier: jira_reporting
+  description: "Jira connector used for deployment reporting and any future Jira Create/Update/Approval steps"
+  orgIdentifier: YOUR_ORG_IDENTIFIER
+  projectIdentifier: YOUR_PROJECT_IDENTIFIER
+  type: Jira
+  spec:
+    jiraUrl: https://YOUR_COMPANY.atlassian.net
+    auth:
+      type: UsernamePassword
+      spec:
+        username: YOUR_JIRA_LOGIN_EMAIL
+        # Create this secret in Harness first (Text Secret), ideally sourced
+        # from your Vault secret manager connection rather than typed in directly.
+        passwordRef: jira_api_token
+    ignoreTestConnection: false
