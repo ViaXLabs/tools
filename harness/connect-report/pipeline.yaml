@@ -19,6 +19,15 @@ pipeline:
     - {name: confluenceEmail, type: String, value: <+input>}      # same as confluence_reporting connector's username
     - {name: confluenceSpaceKey, type: String, value: <+input>}
     - {name: s3Bucket, type: String, value: <+input>}
+    - {name: newRelicAccountId, type: String, value: <+input>}
+    - {name: newRelicApiMode, type: String, value: "nerdgraph"}       # nerdgraph, insights, or both
+    - {name: newRelicRegion, type: String, value: "us"}
+    - {name: newRelicEntityName, type: String, value: <+input>}
+    - {name: nexusServerUrl, type: String, value: <+input>}
+    - {name: nexusUsername, type: String, value: <+input>}       # same as nexus_reporting connector's username
+    - {name: nexusRepository, type: String, value: <+input>}
+    - {name: nexusComponent, type: String, value: <+input>}
+    - {name: nexusVersion, type: String, value: <+input>}
 
   stages:
     - stage:
@@ -120,6 +129,45 @@ pipeline:
                           - {name: CONFLUENCE_EMAIL, type: String, value: <+pipeline.variables.confluenceEmail>}
                           - {name: CONFLUENCE_API_TOKEN, type: String, value: <+secrets.getValue("confluence_api_token")>}
                           - {name: CONFLUENCE_SPACE_KEY, type: String, value: <+pipeline.variables.confluenceSpaceKey>}
+                      timeout: 5m
+
+                  # Uses the same secret as the newrelic_reporting connector
+                  # (harness/connectors/newrelic-connector.yaml).
+                  - step:
+                      name: fetch new relic
+                      identifier: fetch_newrelic
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/newrelic.sh}}
+                        environmentVariables:
+                          - {name: NEW_RELIC_ACCOUNT_ID, type: String, value: <+pipeline.variables.newRelicAccountId>}
+                          - {name: NEW_RELIC_API_MODE, type: String, value: <+pipeline.variables.newRelicApiMode>}
+                          - {name: NEW_RELIC_API_KEY, type: String, value: <+secrets.getValue("newrelic_api_key")>}
+                          - {name: NEW_RELIC_INSIGHTS_QUERY_KEY, type: String, value: <+secrets.getValue("newrelic_insights_query_key")>}
+                          - {name: NEW_RELIC_REGION, type: String, value: <+pipeline.variables.newRelicRegion>}
+                          - {name: NEW_RELIC_ENTITY_NAME, type: String, value: <+pipeline.variables.newRelicEntityName>}
+                      timeout: 5m
+
+                  # Uses the same secret as the nexus_reporting connector
+                  # (harness/connectors/nexus-connector.yaml). Repository
+                  # only - no Nexus IQ / scan data.
+                  - step:
+                      name: fetch nexus
+                      identifier: fetch_nexus
+                      type: ShellScript
+                      spec:
+                        shell: Bash
+                        onDelegate: true
+                        source: {type: Inline, spec: {script: bash fetch/nexus.sh}}
+                        environmentVariables:
+                          - {name: NEXUS_SERVER_URL, type: String, value: <+pipeline.variables.nexusServerUrl>}
+                          - {name: NEXUS_USERNAME, type: String, value: <+pipeline.variables.nexusUsername>}
+                          - {name: NEXUS_PASSWORD, type: String, value: <+secrets.getValue("nexus_password")>}
+                          - {name: NEXUS_REPOSITORY, type: String, value: <+pipeline.variables.nexusRepository>}
+                          - {name: NEXUS_COMPONENT, type: String, value: <+pipeline.variables.nexusComponent>}
+                          - {name: NEXUS_VERSION, type: String, value: <+pipeline.variables.nexusVersion>}
                       timeout: 5m
 
     - stage:

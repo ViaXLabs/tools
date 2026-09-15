@@ -1,0 +1,25 @@
+# Harness Nexus connector - the plain Nexus Repository server, not Nexus IQ.
+# No scan/policy data here on purpose (you flagged you're not worried about
+# that right now) - just artifact metadata: checksum, version, location.
+#
+# `nexusServerUrl` and `version` are modeled on Harness's confirmed Docker
+# connector pattern (dockerRegistryUrl/auth.UsernamePassword) plus Nexus's
+# documented settings (Repository URL, Version 3.x, username/password).
+# Quick check worth doing: create this once in the Harness UI and diff the
+# generated YAML against this file, same as the Confluence connector.
+connector:
+  name: nexus-reporting
+  identifier: nexus_reporting
+  description: "Nexus Repository connector used for deployment reporting - artifact metadata only, no IQ scan data"
+  orgIdentifier: YOUR_ORG_IDENTIFIER
+  projectIdentifier: YOUR_PROJECT_IDENTIFIER
+  type: Nexus
+  spec:
+    nexusServerUrl: https://YOUR_NEXUS_SERVER
+    version: "3.x"
+    auth:
+      type: UsernamePassword
+      spec:
+        username: YOUR_NEXUS_USERNAME
+        # Create this secret in Harness first (Text Secret, ideally Vault-backed).
+        passwordRef: nexus_password

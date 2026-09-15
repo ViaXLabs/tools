@@ -21,6 +21,14 @@ def build_record(envelopes):
     argocd = envelopes.get("argocd", {}).get("payload", {})
     jira = envelopes.get("jira", {}).get("payload", {})
     confluence = envelopes.get("confluence", {}).get("payload", {})
+    newrelic = envelopes.get("newrelic", {}).get("payload", {})
+    newrelic_nerdgraph = newrelic.get("nerdgraph") or {}
+    newrelic_insights = newrelic.get("insights") or {}
+    newrelic_results = (
+        newrelic_nerdgraph.get("data", {}).get("actor", {}).get("account", {}).get("nrql", {}).get("results", [])
+        or newrelic_insights.get("results", [])
+    )
+    nexus = envelopes.get("nexus", {}).get("payload", {})
 
     service = next((e["service"] for e in envelopes.values() if e.get("service") and e["service"] != "unknown"), "unknown")
     environment = next((e["environment"] for e in envelopes.values() if e.get("environment") and e["environment"] != "unknown"), "unknown")
@@ -58,8 +66,23 @@ def build_record(envelopes):
             }
             for page in confluence.get("results", [])
         ],
-        "security": {},   # filled in phase 2
-        "health": {},      # filled in phase 3
+        "artifact": {
+            "nexus": [
+                {
+                    "name": item.get("name"),
+                    "version": item.get("version"),
+                    "assets": [
+                        {"path": a.get("path"), "checksum_sha1": a.get("checksum", {}).get("sha1")}
+                        for a in item.get("assets", [])
+                    ],
+                }
+                for item in nexus.get("items", [])
+            ],
+        },
+        "security": {},   # not tracked yet - Nexus IQ / SonarQube / Checkmarx would land here
+        "health": {
+            "newrelic": newrelic_results,
+        },
     }
     return record
 

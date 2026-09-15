@@ -1,0 +1,29 @@
+# Harness New Relic connector.
+# Field names (url, accountId, apiKeyRef, delegateSelectors) confirmed via
+# Harness's own connector schema. Note on scope: Harness's New Relic
+# connector is built for Continuous Verification (Health Sources that judge
+# a canary/rolling deploy), not free-form historical querying. So this
+# connector still gives fetch/newrelic.sh one tested, auditable credential -
+# the actual query for the report happens directly against New Relic's APIs.
+#
+# fetch/newrelic.sh supports both API paths Harness's own docs mention:
+#   - NerdGraph (current, recommended) - uses this connector's apiKeyRef
+#   - Insights Query API (older, deprecated by New Relic itself) - needs a
+#     SEPARATE secret, since Insights uses a distinct "Query Key" credential
+#     type, not the User API key stored here. Create newrelic_insights_query_key
+#     as its own Harness secret if you're using NEW_RELIC_API_MODE=insights or
+#     "both" - it isn't part of this connector's own fields.
+connector:
+  name: newrelic-reporting
+  identifier: newrelic_reporting
+  description: "New Relic connector used for deployment reporting"
+  orgIdentifier: YOUR_ORG_IDENTIFIER
+  projectIdentifier: YOUR_PROJECT_IDENTIFIER
+  type: NewRelic
+  spec:
+    url: https://api.newrelic.com
+    accountId: YOUR_NEW_RELIC_ACCOUNT_ID
+    # Create this secret in Harness first (Text Secret, ideally Vault-backed).
+    # Must be a User API key (prefixed NRAK-).
+    apiKeyRef: newrelic_api_key
+    delegateSelectors: []
