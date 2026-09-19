@@ -1,0 +1,81 @@
+# ============================================================================
+# HARNESS STEP TEMPLATE: Send Email  (CI Build stage) -- via plugins/email
+# ============================================================================
+# Uses Harness's own officially maintained Email plugin instead of a custom
+# script: https://github.com/harness-community/drone-email (image
+# plugins/email). This is the plugin Harness Support points people at for
+# CI-stage email + attachments, since the native "Email" step can't run in
+# Build stages at all.
+#
+# Scope: Account (add orgIdentifier/projectIdentifier to narrow it).
+#
+# BEFORE FIRST USE:
+#   - connectorRef needs a Docker-Hub-capable container registry connector
+#     (default guess below is account.harnessImage -- swap if that doesn't
+#     exist in your account).
+#   - host/port/username/password should match your existing SMTP setup.
+#   - recipients / attachments are plain comma-separated strings here (since
+#     runtime inputs are scalar strings) -- the plugin's underlying flags
+#     accept lists, and comma-separated values are the standard way to feed
+#     a list through a single env var. If that doesn't parse cleanly for
+#     your SMTP relay, check https://github.com/harness-community/drone-email
+#     for the exact separator, or pass one recipient/attachment at a time.
+#   - Note: this plugin doesn't have a distinct "Cc" concept -- everyone
+#     listed in recipients is treated the same way (no To/Cc header split).
+#
+# USAGE from a calling pipeline (CI Build stage):
+#   - step:
+#       name: Notify team
+#       identifier: notify_team
+#       template:
+#         templateRef: account.Send_Email_CI_Plugin   # match wherever you save it
+#         versionLabel: "1.0.0"
+#         templateInputs:
+#           type: Plugin
+#           spec:
+#             settings:
+#               recipients: dev-team@example.com,lead@example.com
+#               subject: "Build <+pipeline.sequenceId> - <+pipeline.status>"
+#               body: |-
+#                 <p>Hi team, build finished.</p>
+#                 <ul>
+#                   <li>Status: <+pipeline.status></li>
+#                   <li>Branch: <+codebase.branch></li>
+#                 </ul>
+#                 <hr>
+#                 <p style="font-size:12px;color:#888">
+#                 Pipeline <+pipeline.name>, build #<+pipeline.sequenceId>,
+#                 triggered by <+pipeline.triggeredBy.name>.<br>
+#                 <a href="<+pipeline.executionUrl>">View this run</a>
+#                 </p>
+#               attachments: reports/summary.pdf,logs/build.log
+#               host: smtp.yourprovider.com
+#               username: pipelines@yourcompany.com
+#               password: <+secrets.getValue("smtp_password")>
+# ============================================================================
+template:
+  name: Send Email (CI Build - Plugin)
+  identifier: Send_Email_CI_Plugin
+  versionLabel: 1.0.0
+  type: Step
+  tags:
+    category: notification
+  spec:
+    timeout: 5m
+    type: Plugin
+    spec:
+      connectorRef: <+input>.default("account.harnessImage")
+      image: plugins/email:3.0.0
+      settings:
+        host: <+input>
+        port: <+input>.default("587")
+        username: <+input>.default("")
+        password: <+input>.default("")
+        skip_verify: <+input>.default("false")
+        from.address: <+input>.default("pipelines@yourcompany.com")
+        from.name: <+input>.default("Harness Pipelines")
+        recipients: <+input>
+        recipients_only: <+input>.default("true")
+        subject: <+input>
+        body: <+input>
+        attachments: <+input>.default("")
