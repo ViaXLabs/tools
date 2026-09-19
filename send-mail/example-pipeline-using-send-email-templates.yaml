@@ -1,0 +1,101 @@
+# ============================================================================
+# EXAMPLE PIPELINE — calling both Send Email templates
+# ============================================================================
+# Illustrative only: placeholder org/project/SMTP/secret values throughout.
+# Shows the Custom-stage (Send_Email_CD) and CI Build-stage (Send_Email_CI)
+# templates being called from the same pipeline. Swap the templateRef
+# scoping prefix (account./org./<none>) to wherever you actually save them.
+# ============================================================================
+pipeline:
+  name: Example - Using Send Email Templates
+  identifier: example_using_send_email_templates
+  projectIdentifier: YOUR_PROJECT
+  orgIdentifier: YOUR_ORG
+  stages:
+  - stage:
+      name: Notify (Custom stage)
+      identifier: notify_custom
+      type: Custom
+      spec:
+        execution:
+          steps:
+          - step:
+              name: Send status email
+              identifier: send_status_email
+              template:
+                templateRef: account.Send_Email_CD
+                versionLabel: 1.0.0
+                templateInputs:
+                  type: ShellScript
+                  spec:
+                    environmentVariables:
+                    - name: MAIL_TO
+                      type: String
+                      value: dev-team@example.com
+                    - name: MAIL_SUBJECT
+                      type: String
+                      value: Pipeline <+pipeline.name> - <+pipeline.status>
+                    - name: MAIL_BODY_HTML
+                      type: String
+                      value: |-
+                        <p>Hi team,</p>
+                        <ul>
+                          <li>Status: <+pipeline.status></li>
+                          <li>Stage: <+stage.name></li>
+                        </ul>
+                        <p>Build number, timestamp and the run link are added automatically below.</p>
+                    - name: MAIL_ATTACHMENTS
+                      type: String
+                      value: ''
+                    - name: SMTP_HOST
+                      type: String
+                      value: smtp.yourprovider.com
+                    - name: SMTP_USER
+                      type: String
+                      value: pipelines@yourcompany.com
+                    - name: SMTP_PASSWORD
+                      type: Secret
+                      value: <+secrets.getValue("smtp_password")>
+  - stage:
+      name: Build (CI stage)
+      identifier: build_ci
+      type: CI
+      spec:
+        cloneCodebase: false
+        platform:
+          os: Linux
+          arch: Amd64
+        runtime:
+          type: Cloud
+          spec: {}
+        execution:
+          steps:
+          - step:
+              type: Run
+              name: Run tests
+              identifier: run_tests
+              spec:
+                shell: Sh
+                command: echo "pretend tests ran here"
+          - step:
+              name: Email test report
+              identifier: email_test_report
+              template:
+                templateRef: account.Send_Email_CI
+                versionLabel: 1.0.0
+                templateInputs:
+                  type: Run
+                  spec:
+                    envVariables:
+                      MAIL_TO: dev-team@example.com
+                      MAIL_SUBJECT: CI build <+pipeline.sequenceId> finished
+                      MAIL_BODY_HTML: |-
+                        <p>Hi team,</p>
+                        <ul>
+                          <li>Branch: <+codebase.branch></li>
+                          <li>Status: <+pipeline.status></li>
+                        </ul>
+                      MAIL_ATTACHMENTS: ''
+                      SMTP_HOST: smtp.yourprovider.com
+                      SMTP_USER: pipelines@yourcompany.com
+                      SMTP_PASSWORD: <+secrets.getValue("smtp_password")>

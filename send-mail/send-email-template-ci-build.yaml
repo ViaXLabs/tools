@@ -1,0 +1,165 @@
+# ============================================================================
+# HARNESS STEP TEMPLATE: Send Email  (CI Build stage)
+# ============================================================================
+# Scope: Account. Companion to send-email-template-cd-custom.yaml -- same
+# inputs and behavior, but implemented as a CI "Run" step so it works inside
+# CI Build stages (Harness's native Email step can't run there at all, and
+# has no attachment support even where it can run).
+#
+# Defaults to no image/connectorRef, which works out of the box on Harness
+# Cloud build infrastructure (curl is preinstalled there). If your Build
+# stage uses self-managed Kubernetes or VM infra instead, uncomment
+# connectorRef + image below and point at any small image with curl + a
+# POSIX shell, e.g. curlimages/curl:8.9.1.
+#
+# WHAT IT SENDS / BEFORE FIRST USE: identical to the CD/Custom version --
+# see the header comment in that file. One difference: secrets here are
+# passed as a plain <+secrets.getValue("...")> expression (Harness still
+# masks the resolved value in logs), since CI's Run step doesn't have a
+# separate "Secret" input type the way Shell Script does.
+#
+# USAGE from a calling pipeline (CI Build stage):
+#   - step:
+#       name: Notify team
+#       identifier: notify_team
+#       template:
+#         templateRef: account.Send_Email_CI   # add org./project prefix to match where you save it
+#         versionLabel: "1.0.0"
+#         templateInputs:
+#           type: Run
+#           spec:
+#             envVariables:
+#               MAIL_TO: dev-team@example.com
+#               MAIL_SUBJECT: "Build <+pipeline.sequenceId> - <+pipeline.status>"
+#               MAIL_BODY_HTML: |-
+#                 <p>Hi team,</p>
+#                 <ul>
+#                   <li>Status: <+pipeline.status></li>
+#                   <li>Branch: <+codebase.branch></li>
+#                 </ul>
+#               MAIL_ATTACHMENTS: "reports/summary.pdf"
+#               SMTP_HOST: smtp.yourprovider.com
+#               SMTP_USER: pipelines@yourcompany.com
+#               SMTP_PASSWORD: <+secrets.getValue("smtp_password")>
+# ============================================================================
+template:
+  name: Send Email (CI Build)
+  identifier: Send_Email_CI
+  versionLabel: 1.0.0
+  type: Step
+  tags:
+    category: notification
+  spec:
+    timeout: 5m
+    type: Run
+    spec:
+      shell: Sh
+      command: |
+        #!/bin/sh
+        set -eu
+
+        : "${MAIL_TO:?MAIL_TO is required}"
+        : "${MAIL_SUBJECT:?MAIL_SUBJECT is required}"
+        : "${MAIL_BODY_HTML:?MAIL_BODY_HTML is required}"
+        : "${MAIL_FROM:?MAIL_FROM is required}"
+        : "${SMTP_HOST:?SMTP_HOST is required}"
+        : "${SMTP_USER:?SMTP_USER is required}"
+        : "${SMTP_PASSWORD:?SMTP_PASSWORD is required}"
+        SMTP_PORT="${SMTP_PORT:-587}"
+        MAIL_CC="${MAIL_CC:-}"
+        MAIL_ATTACHMENTS="${MAIL_ATTACHMENTS:-}"
+
+        trim() { printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+
+        SENT_AT=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        BOUNDARY="harness-mail-$(date +%s)-$$"
+        MSG_FILE=$(mktemp)
+
+        # Build one --mail-rcpt flag per recipient (To + Cc)
+        RCPT_ARGS=""
+        OLDIFS=$IFS
+        IFS=','
+        for addr in $MAIL_TO $MAIL_CC; do
+          a=$(trim "$addr")
+          [ -n "$a" ] && RCPT_ARGS="$RCPT_ARGS --mail-rcpt $a"
+        done
+        IFS=$OLDIFS
+
+        # Auto-injected pipeline metadata, appended to every email so callers get it for free
+        FOOTER=$(cat <<EOF
+        <hr>
+        <p style="font-size:12px;color:#888888;font-family:sans-serif">
+        Sent automatically by Harness pipeline <b>${PIPELINE_NAME:-unknown}</b>, build #${PIPELINE_BUILD_NUMBER:-n/a},
+        triggered by ${TRIGGERED_BY:-unknown}, at ${SENT_AT}.<br>
+        <a href="${PIPELINE_EXECUTION_URL:-#}">View this pipeline run</a>
+        </p>
+        EOF
+        )
+
+        {
+          printf 'From: %s\n' "$MAIL_FROM"
+          printf 'To: %s\n' "$MAIL_TO"
+          [ -n "$MAIL_CC" ] && printf 'Cc: %s\n' "$MAIL_CC"
+          printf 'Subject: %s\n' "$MAIL_SUBJECT"
+          printf 'MIME-Version: 1.0\n'
+          printf 'Content-Type: multipart/mixed; boundary="%s"\n' "$BOUNDARY"
+          printf '\n'
+          printf -- '--%s\n' "$BOUNDARY"
+          printf 'Content-Type: text/html; charset=UTF-8\n'
+          printf 'Content-Transfer-Encoding: 8bit\n'
+          printf '\n'
+          printf '%s\n' "$MAIL_BODY_HTML"
+          printf '%s\n' "$FOOTER"
+          printf '\n'
+
+          if [ -n "$MAIL_ATTACHMENTS" ]; then
+            IFS=','
+            for f in $MAIL_ATTACHMENTS; do
+              f=$(trim "$f")
+              [ -z "$f" ] && continue
+              if [ ! -f "$f" ]; then
+                echo "WARNING: attachment not found, skipping: $f" >&2
+                continue
+              fi
+              fname=$(basename "$f")
+              printf -- '--%s\n' "$BOUNDARY"
+              printf 'Content-Type: application/octet-stream; name="%s"\n' "$fname"
+              printf 'Content-Transfer-Encoding: base64\n'
+              printf 'Content-Disposition: attachment; filename="%s"\n' "$fname"
+              printf '\n'
+              base64 "$f"
+              printf '\n'
+            done
+            IFS=$OLDIFS
+          fi
+
+          printf -- '--%s--\n' "$BOUNDARY"
+        } > "$MSG_FILE"
+
+        echo "Sending email -> to: $MAIL_TO ${MAIL_CC:+| cc: $MAIL_CC}"
+
+        curl --silent --show-error \
+          --url "smtp://${SMTP_HOST}:${SMTP_PORT}" \
+          --ssl-reqd \
+          --mail-from "$MAIL_FROM" \
+          $RCPT_ARGS \
+          --upload-file "$MSG_FILE" \
+          --user "${SMTP_USER}:${SMTP_PASSWORD}"
+
+        rm -f "$MSG_FILE"
+        echo "Email sent."
+      envVariables:
+        MAIL_TO: <+input>
+        MAIL_CC: <+input>.default("")
+        MAIL_FROM: <+input>.default("pipelines@yourcompany.com")
+        MAIL_SUBJECT: <+input>
+        MAIL_BODY_HTML: <+input>
+        MAIL_ATTACHMENTS: <+input>.default("")
+        SMTP_HOST: <+input>
+        SMTP_PORT: <+input>.default("587")
+        SMTP_USER: <+input>
+        SMTP_PASSWORD: <+input>
+        PIPELINE_NAME: <+pipeline.name>
+        PIPELINE_BUILD_NUMBER: <+pipeline.sequenceId>
+        PIPELINE_EXECUTION_URL: <+pipeline.executionUrl>
+        TRIGGERED_BY: <+pipeline.triggeredBy.name>

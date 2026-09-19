@@ -1,0 +1,220 @@
+# ============================================================================
+# HARNESS STEP TEMPLATE: Send Email  (CD / Custom / Approval stages)
+# ============================================================================
+# Scope: Account (no orgIdentifier/projectIdentifier set below, so every org
+# and project on the account can use it). Add orgIdentifier/projectIdentifier
+# if you'd rather scope it narrower.
+#
+# Runs as a Shell Script step on the Delegate. For CI Build stages, use the
+# companion template in send-email-template-ci-build.yaml instead (same
+# inputs, same behavior, different runtime).
+#
+# WHAT IT SENDS: an HTML email (bullets, links, multi-line body all work),
+# with optional file attachments (paths relative to the workspace), and it
+# automatically appends a footer with the pipeline name, build number, who
+# triggered it, the timestamp, and a link back to this exact pipeline run.
+#
+# BEFORE FIRST USE:
+#   - Swap SMTP_HOST / SMTP_USER for your real values (or leave as <+input>
+#     so each pipeline fills them in).
+#   - SMTP_PASSWORD is typed as a Secret input -- point it at your existing
+#     Harness secret when you use the template (you mentioned you already
+#     have credentials wired up; this just needs the secret's identifier).
+#   - Default SMTP_PORT (587) assumes STARTTLS. If your provider uses port
+#     465 (implicit TLS) instead, change the curl --url scheme from
+#     smtp:// to smtps:// in the script below.
+#
+# USAGE from a calling pipeline:
+#   - step:
+#       name: Notify team
+#       identifier: notify_team
+#       template:
+#         templateRef: account.Send_Email_CD   # add org./project prefix to match where you save it
+#         versionLabel: "1.0.0"
+#         templateInputs:
+#           type: ShellScript
+#           spec:
+#             environmentVariables:
+#               - name: MAIL_TO
+#                 type: String
+#                 value: dev-team@example.com
+#               - name: MAIL_SUBJECT
+#                 type: String
+#                 value: "Build <+pipeline.sequenceId> - <+pipeline.status>"
+#               - name: MAIL_BODY_HTML
+#                 type: String
+#                 value: |-
+#                   <p>Hi team,</p>
+#                   <ul>
+#                     <li>Status: <+pipeline.status></li>
+#                     <li>Branch: <+codebase.branch></li>
+#                   </ul>
+#                   <p>Full report attached.</p>
+#               - name: MAIL_ATTACHMENTS
+#                 type: String
+#                 value: "reports/summary.pdf,logs/build.log"
+#               - name: SMTP_HOST
+#                 type: String
+#                 value: smtp.yourprovider.com
+#               - name: SMTP_USER
+#                 type: String
+#                 value: pipelines@yourcompany.com
+#               - name: SMTP_PASSWORD
+#                 type: Secret
+#                 value: <+secrets.getValue("smtp_password")>
+# ============================================================================
+template:
+  name: Send Email (CD-Custom)
+  identifier: Send_Email_CD
+  versionLabel: 1.0.0
+  type: Step
+  tags:
+    category: notification
+  spec:
+    timeout: 5m
+    type: ShellScript
+    spec:
+      shell: Bash
+      executionTarget: {}
+      delegateSelectors: []
+      source:
+        type: Inline
+        spec:
+          script: |
+            #!/bin/sh
+            set -eu
+
+            : "${MAIL_TO:?MAIL_TO is required}"
+            : "${MAIL_SUBJECT:?MAIL_SUBJECT is required}"
+            : "${MAIL_BODY_HTML:?MAIL_BODY_HTML is required}"
+            : "${MAIL_FROM:?MAIL_FROM is required}"
+            : "${SMTP_HOST:?SMTP_HOST is required}"
+            : "${SMTP_USER:?SMTP_USER is required}"
+            : "${SMTP_PASSWORD:?SMTP_PASSWORD is required}"
+            SMTP_PORT="${SMTP_PORT:-587}"
+            MAIL_CC="${MAIL_CC:-}"
+            MAIL_ATTACHMENTS="${MAIL_ATTACHMENTS:-}"
+
+            trim() { printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+
+            SENT_AT=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+            BOUNDARY="harness-mail-$(date +%s)-$$"
+            MSG_FILE=$(mktemp)
+
+            # Build one --mail-rcpt flag per recipient (To + Cc)
+            RCPT_ARGS=""
+            OLDIFS=$IFS
+            IFS=','
+            for addr in $MAIL_TO $MAIL_CC; do
+              a=$(trim "$addr")
+              [ -n "$a" ] && RCPT_ARGS="$RCPT_ARGS --mail-rcpt $a"
+            done
+            IFS=$OLDIFS
+
+            # Auto-injected pipeline metadata, appended to every email so callers get it for free
+            FOOTER=$(cat <<EOF
+            <hr>
+            <p style="font-size:12px;color:#888888;font-family:sans-serif">
+            Sent automatically by Harness pipeline <b>${PIPELINE_NAME:-unknown}</b>, build #${PIPELINE_BUILD_NUMBER:-n/a},
+            triggered by ${TRIGGERED_BY:-unknown}, at ${SENT_AT}.<br>
+            <a href="${PIPELINE_EXECUTION_URL:-#}">View this pipeline run</a>
+            </p>
+            EOF
+            )
+
+            {
+              printf 'From: %s\n' "$MAIL_FROM"
+              printf 'To: %s\n' "$MAIL_TO"
+              [ -n "$MAIL_CC" ] && printf 'Cc: %s\n' "$MAIL_CC"
+              printf 'Subject: %s\n' "$MAIL_SUBJECT"
+              printf 'MIME-Version: 1.0\n'
+              printf 'Content-Type: multipart/mixed; boundary="%s"\n' "$BOUNDARY"
+              printf '\n'
+              printf -- '--%s\n' "$BOUNDARY"
+              printf 'Content-Type: text/html; charset=UTF-8\n'
+              printf 'Content-Transfer-Encoding: 8bit\n'
+              printf '\n'
+              printf '%s\n' "$MAIL_BODY_HTML"
+              printf '%s\n' "$FOOTER"
+              printf '\n'
+
+              if [ -n "$MAIL_ATTACHMENTS" ]; then
+                IFS=','
+                for f in $MAIL_ATTACHMENTS; do
+                  f=$(trim "$f")
+                  [ -z "$f" ] && continue
+                  if [ ! -f "$f" ]; then
+                    echo "WARNING: attachment not found, skipping: $f" >&2
+                    continue
+                  fi
+                  fname=$(basename "$f")
+                  printf -- '--%s\n' "$BOUNDARY"
+                  printf 'Content-Type: application/octet-stream; name="%s"\n' "$fname"
+                  printf 'Content-Transfer-Encoding: base64\n'
+                  printf 'Content-Disposition: attachment; filename="%s"\n' "$fname"
+                  printf '\n'
+                  base64 "$f"
+                  printf '\n'
+                done
+                IFS=$OLDIFS
+              fi
+
+              printf -- '--%s--\n' "$BOUNDARY"
+            } > "$MSG_FILE"
+
+            echo "Sending email -> to: $MAIL_TO ${MAIL_CC:+| cc: $MAIL_CC}"
+
+            curl --silent --show-error \
+              --url "smtp://${SMTP_HOST}:${SMTP_PORT}" \
+              --ssl-reqd \
+              --mail-from "$MAIL_FROM" \
+              $RCPT_ARGS \
+              --upload-file "$MSG_FILE" \
+              --user "${SMTP_USER}:${SMTP_PASSWORD}"
+
+            rm -f "$MSG_FILE"
+            echo "Email sent."
+      environmentVariables:
+      - name: MAIL_TO
+        type: String
+        value: <+input>
+      - name: MAIL_CC
+        type: String
+        value: <+input>.default("")
+      - name: MAIL_FROM
+        type: String
+        value: <+input>.default("pipelines@yourcompany.com")
+      - name: MAIL_SUBJECT
+        type: String
+        value: <+input>
+      - name: MAIL_BODY_HTML
+        type: String
+        value: <+input>
+      - name: MAIL_ATTACHMENTS
+        type: String
+        value: <+input>.default("")
+      - name: SMTP_HOST
+        type: String
+        value: <+input>
+      - name: SMTP_PORT
+        type: String
+        value: <+input>.default("587")
+      - name: SMTP_USER
+        type: String
+        value: <+input>
+      - name: SMTP_PASSWORD
+        type: Secret
+        value: <+input>
+      - name: PIPELINE_NAME
+        type: String
+        value: <+pipeline.name>
+      - name: PIPELINE_BUILD_NUMBER
+        type: String
+        value: <+pipeline.sequenceId>
+      - name: PIPELINE_EXECUTION_URL
+        type: String
+        value: <+pipeline.executionUrl>
+      - name: TRIGGERED_BY
+        type: String
+        value: <+pipeline.triggeredBy.name>
+      outputVariables: []
